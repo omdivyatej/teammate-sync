@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Local state / control files (these are per-machine, not source)
+**/.sync-state.json
+**/.active-sessions.json
+**/.shared-sessions.json
+**/.active-sessions.lock
+**/.shared-sessions.lock
+
+# Cloud VM SSH key (provisioned per-account, never commit)
+cloud/saketh-vm.pem
+cloud/*.pem
+
+# OS noise
+.DS_Store
+
+# Logs
+*.log
+
+# Local example_data control files
+example_data/.sync-state.json
