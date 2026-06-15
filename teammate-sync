@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Thin wrapper that runs cli.py with the project venv's Python.
-# Symlink to ~/.local/bin/teammate-sync (or wherever) for global use.
-set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-exec "${HERE}/.venv/bin/python" "${HERE}/cli.py" "$@"

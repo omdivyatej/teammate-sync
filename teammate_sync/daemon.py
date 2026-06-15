@@ -39,7 +39,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from backend import (
+from .backend import (
     ACTIVE_SESSIONS_FILENAME,
     SHARED_SESSIONS_FILENAME,
     SYNC_STATE_FILENAME,

@@ -5,6 +5,10 @@ __pycache__/
 *.pyo
 *.egg-info/
 
+# Build artifacts (wheels, sdists, build dirs)
+build/
+dist/
+
 # Local state / control files (these are per-machine, not source)
 **/.sync-state.json
 **/.active-sessions.json

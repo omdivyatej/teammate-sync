@@ -29,23 +29,20 @@ from pathlib import Path
 
 import httpx
 
-from auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
+from .auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
 
 
 CALLBACK_TIMEOUT_SECONDS = 180
 
 
-def _install_hooks_into_claude_settings(project_dir: Path) -> Path:
+def _install_hooks_into_claude_settings(binary: str) -> Path:
     """
     Merge SessionStart / PostToolUse / SessionEnd hooks into ~/.claude/settings.json,
     preserving any other settings already there.
 
-    Hooks write to a global ~/.teammate-sync/active-sessions.json — no
-    workspace path baked in.
+    All three hooks dispatch through the installed `teammate-sync` binary —
+    no path-to-a-checkout baked in. Hooks write to ~/.teammate-sync/state/.
     """
-    py_bin = project_dir / ".venv" / "bin" / "python"
-    hook_script = project_dir / "hook.py"
-
     settings_path = Path("~/.claude/settings.json").expanduser()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -61,19 +58,16 @@ def _install_hooks_into_claude_settings(project_dir: Path) -> Path:
     for event, op in [("SessionStart", "start"),
                       ("PostToolUse", "heartbeat"),
                       ("SessionEnd", "end")]:
-        cmd = f"{py_bin} {hook_script} {op}"
+        cmd = f"{binary} hook {op}"
         hooks[event] = [{"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}]
 
     settings_path.write_text(json.dumps(settings, indent=2))
     return settings_path
 
 
-def _register_mcp(project_dir: Path, anthropic_key: str) -> bool:
+def _register_mcp(binary: str, anthropic_key: str) -> bool:
     """Register the MCP server via `claude mcp add`. Returns True on success."""
     import subprocess as _sp
-
-    py_bin = project_dir / ".venv" / "bin" / "python"
-    server = project_dir / "server.py"
 
     # remove any existing registration first (idempotent)
     _sp.run(
@@ -88,7 +82,7 @@ def _register_mcp(project_dir: Path, anthropic_key: str) -> bool:
             "--scope", "user",
             "teammate-sync",
             "--",
-            str(py_bin), str(server),
+            binary, "mcp-server",
         ],
         capture_output=True,
         text=True,
@@ -100,10 +94,9 @@ def _register_mcp(project_dir: Path, anthropic_key: str) -> bool:
 
 
 def cmd_init(args) -> int:
-    import json as _json
     import os as _os
 
-    project_dir = Path(__file__).resolve().parent
+    binary = _resolve_self_binary()
     backend_url = args.backend_url.rstrip("/")
     captured: dict[str, str | None] = {"token": None}
 
@@ -218,9 +211,9 @@ def cmd_init(args) -> int:
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
     files = {
-        "share.md":   _slash_command_md("share",   project_dir),
-        "unshare.md": _slash_command_md("unshare", project_dir),
-        "shared.md":  _slash_command_md("list",    project_dir),
+        "share.md":   _slash_command_md("share",   binary),
+        "unshare.md": _slash_command_md("unshare", binary),
+        "shared.md":  _slash_command_md("shared",  binary),
     }
     for name, content in files.items():
         (commands_dir / name).write_text(content)
@@ -228,7 +221,7 @@ def cmd_init(args) -> int:
 
     # --- Hooks ---------------------------------------------------------------
     print("\nRegistering Claude Code hooks (SessionStart, PostToolUse, SessionEnd)...")
-    settings_path = _install_hooks_into_claude_settings(project_dir)
+    settings_path = _install_hooks_into_claude_settings(binary)
     print(f"  Merged into {settings_path}")
 
     # --- MCP server ----------------------------------------------------------
@@ -238,11 +231,11 @@ def cmd_init(args) -> int:
             "\n⚠️  ANTHROPIC_API_KEY not set in your shell. Skipping MCP registration.\n"
             "    Set it and register manually:\n"
             f"    claude mcp add -e ANTHROPIC_API_KEY=... --scope user teammate-sync \\\n"
-            f"      -- {project_dir / '.venv' / 'bin' / 'python'} {project_dir / 'server.py'}"
+            f"      -- {binary} mcp-server"
         )
     else:
         print("\nRegistering MCP server with Claude Code (user scope)...")
-        if _register_mcp(project_dir, anthropic_key):
+        if _register_mcp(binary, anthropic_key):
             print("  ✓ teammate-sync registered")
 
     # --- Done ----------------------------------------------------------------
@@ -250,8 +243,8 @@ def cmd_init(args) -> int:
     print("✓ Setup complete.")
     print("=" * 60)
     print(f"\nTwo more things you do once:")
-    print(f"  1. Start the daemon (leave the terminal open):")
-    print(f"       {project_dir}/start-daemon.sh")
+    print(f"  1. Start the daemon in a terminal you keep open:")
+    print(f"       teammate-sync daemon")
     print(f"  2. Restart any open Claude Code sessions so they pick up the hooks + MCP.")
     print(f"\nThen from any Claude Code session, anywhere, type /share to share that")
     print(f"session's transcript with your teammates. /unshare to revoke.")
@@ -303,31 +296,27 @@ def cmd_teammates(args) -> int:
     return 0
 
 
-def _slash_command_md(action: str, project_dir: Path) -> str:
+def _slash_command_md(action: str, binary: str) -> str:
     """
-    Generate a slash-command markdown file with paths resolved for this install.
-
-    No workspace path baked in — share-cli uses a global location at
-    ~/.teammate-sync/shared-sessions.json. Slash commands work in any
-    Claude Code session, regardless of cwd.
+    Generate a slash-command markdown file. Now calls the installed
+    `teammate-sync` binary (or whatever path resolves it), so the same
+    markdown works regardless of where the package is installed.
     """
-    py = project_dir / ".venv" / "bin" / "python"
-    cli = project_dir / "share-cli.py"
     descriptions = {
         "share":   "Mark this Claude Code session as shareable with teammates via teammate-sync",
         "unshare": "Remove this Claude Code session from teammate-sync sharing",
-        "list":    "List which Claude Code sessions are currently shared with teammates via teammate-sync",
+        "shared":  "List which Claude Code sessions are currently shared with teammates via teammate-sync",
     }
     return f"""---
 description: {descriptions[action]}
-allowed-tools: Bash({py}:*)
+allowed-tools: Bash({binary}:*)
 ---
 
 Execute this exact command via the Bash tool and show its full stdout
 output to the user verbatim:
 
 ```
-{py} {cli} {action}
+{binary} {action}
 ```
 
 The CLAUDE_CODE_SESSION_ID and CLAUDE_PROJECT_DIR env vars are set by
@@ -337,28 +326,78 @@ After showing the output, do NOT add commentary.
 """
 
 
+def _resolve_self_binary() -> str:
+    """
+    Find where the installed `teammate-sync` binary lives.
+    Hooks, MCP, and slash commands all dispatch through it.
+    """
+    import shutil
+    found = shutil.which("teammate-sync")
+    if not found:
+        raise RuntimeError(
+            "Could not locate the `teammate-sync` binary on PATH. "
+            "Reinstall with `pip install teammate-sync` and ensure the "
+            "Python scripts directory is on your PATH."
+        )
+    return found
+
+
 def cmd_install_commands(args) -> int:
     """Install /share, /unshare, /shared into ~/.claude/commands/ for this user."""
-    project_dir = Path(__file__).resolve().parent
-
+    binary = _resolve_self_binary()
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
 
     files = {
-        "share.md":   _slash_command_md("share",   project_dir),
-        "unshare.md": _slash_command_md("unshare", project_dir),
-        "shared.md":  _slash_command_md("list",    project_dir),
+        "share.md":   _slash_command_md("share",   binary),
+        "unshare.md": _slash_command_md("unshare", binary),
+        "shared.md":  _slash_command_md("shared",  binary),
     }
     for name, content in files.items():
-        path = commands_dir / name
-        path.write_text(content)
-        print(f"  wrote {path}")
+        (commands_dir / name).write_text(content)
+        print(f"  wrote {commands_dir / name}")
 
     print()
     print(f"✓ Installed /share, /unshare, /shared into {commands_dir}")
-    print(f"  Pointing at: {project_dir}")
+    print(f"  Pointing at: {binary}")
     print()
     print("Restart any open Claude Code sessions to pick them up.")
+    return 0
+
+
+def cmd_share(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_share()
+
+
+def cmd_unshare(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_unshare()
+
+
+def cmd_shared(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_list()
+
+
+def cmd_daemon(args) -> int:
+    from . import daemon as _daemon
+    # daemon's main() reads sys.argv; replace it so the global state dirs are used
+    sys.argv = ["teammate-sync-daemon"] + (args.extra or [])
+    return _daemon.main()
+
+
+def cmd_hook(args) -> int:
+    """Dispatch a Claude Code session lifecycle hook event."""
+    from . import hook as _hook
+    sys.argv = ["teammate-sync-hook", args.op]
+    return _hook.main()
+
+
+def cmd_mcp_server(args) -> int:
+    """Launch the MCP server on stdio (invoked by Claude Code, not by users)."""
+    from . import server as _server
+    _server.mcp.run()
     return 0
 
 
@@ -389,10 +428,30 @@ def main() -> int:
 
     p_install = sub.add_parser(
         "install-commands",
-        help="Write /share, /unshare, /shared slash commands into ~/.claude/commands/ "
-             "with absolute paths for this install.",
+        help="Reinstall /share, /unshare, /shared slash commands into ~/.claude/commands/.",
     )
     p_install.set_defaults(func=cmd_install_commands)
+
+    # Direct-invoke commands (also reachable via the /share, /unshare, /shared slash commands)
+    sub.add_parser("share",   help="Mark the current Claude Code session as shareable.").set_defaults(func=cmd_share)
+    sub.add_parser("unshare", help="Remove the current Claude Code session from sharing.").set_defaults(func=cmd_unshare)
+    sub.add_parser("shared",  help="List currently shared sessions.").set_defaults(func=cmd_shared)
+
+    p_daemon = sub.add_parser(
+        "daemon",
+        help="Run the sync daemon (foreground, leave terminal open).",
+    )
+    p_daemon.add_argument("extra", nargs="*", help="Optional source dir overrides for testing.")
+    p_daemon.set_defaults(func=cmd_daemon)
+
+    # Internal: invoked by Claude Code hooks (SessionStart, PostToolUse, SessionEnd).
+    # End users do not call this directly — `init` wires it into ~/.claude/settings.json.
+    p_hook = sub.add_parser("hook", help=argparse.SUPPRESS)
+    p_hook.add_argument("op", choices=["start", "heartbeat", "end"])
+    p_hook.set_defaults(func=cmd_hook)
+
+    # Internal: invoked by Claude Code over stdio as the MCP server.
+    sub.add_parser("mcp-server", help=argparse.SUPPRESS).set_defaults(func=cmd_mcp_server)
 
     args = parser.parse_args()
     return args.func(args)

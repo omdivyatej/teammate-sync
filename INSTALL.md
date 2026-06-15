@@ -1,33 +1,31 @@
 # teammate-sync — setup
 
-Two steps. After this, type `/share` from any Claude Code session in any
-directory, and your context becomes queryable by your teammates.
+Three commands. After that, type `/share` from any Claude Code session in
+any directory, and your context becomes queryable by your teammates.
 
 ## Prereqs
 
-- Python 3.11+
+- Python 3.11+ (`python3.11 --version`)
 - `claude` (Claude Code CLI)
-- `gh` (GitHub CLI), logged in via `gh auth login`
 - `ANTHROPIC_API_KEY` exported in your shell
 
-## 1. Clone + install (~30s)
-
-Pick any parent directory that is NOT `~/Downloads/`, `~/Documents/`, or
-`~/Desktop/` (those are TCC-protected on macOS and Claude Code's
-subprocesses can't read them).
+## 1. Install (~15s)
 
 ```
-mkdir -p ~/Code && cd ~/Code
-gh repo clone omdivyatej/teammate-sync
-cd teammate-sync
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+pip install git+https://github.com/omdivyatej/teammate-sync.git
 ```
 
-## 2. Initialize (~1 min, interactive)
+(Once we publish to PyPI this collapses to `pip install teammate-sync`.)
+
+This puts a single `teammate-sync` binary on your PATH. Every other piece
+of the system — hooks, MCP server, slash commands, daemon — dispatches
+through it. No checkout, no virtualenv to keep around, no absolute paths
+baked into anything.
+
+## 2. Sign in + register (~1 min, interactive)
 
 ```
-./teammate-sync init
+teammate-sync init
 ```
 
 This one command:
@@ -43,12 +41,10 @@ This one command:
 6. Registers the MCP server with Claude Code (user scope) using your
    `ANTHROPIC_API_KEY` from the shell.
 
-When it finishes, it prints the daemon command.
-
 ## 3. Start the daemon (~5s, leave running)
 
 ```
-./start-daemon.sh
+teammate-sync daemon
 ```
 
 You should see:
@@ -60,8 +56,8 @@ You should see:
 [sync] share-mode INACTIVE — daemon idle until /share is run
 ```
 
-No args needed. The daemon watches every Claude Code project on this machine
-but only uploads sessions you explicitly `/share`. Leave the terminal open.
+The daemon watches every Claude Code project on this machine but only
+uploads sessions you explicitly `/share`. Leave the terminal open.
 
 ---
 
@@ -116,23 +112,26 @@ Identity choices:
 ## Uninstall
 
 ```
-./teammate-sync logout                           # deletes ~/.teammate-sync/auth.json
+teammate-sync logout                             # deletes ~/.teammate-sync/auth.json
 claude mcp remove teammate-sync --scope user     # unregister MCP
 rm -f ~/.claude/commands/share.md ~/.claude/commands/unshare.md ~/.claude/commands/shared.md
 # Edit ~/.claude/settings.json — remove the "hooks" block
 # Kill the daemon (Ctrl-C in its terminal)
 rm -rf ~/.teammate-sync
+pip uninstall teammate-sync
 ```
 
 ## CLI reference
 
 | | |
 |---|---|
-| `./teammate-sync init` | First-run setup (steps in section 2). Re-runnable to refresh hooks / slash commands. |
-| `./teammate-sync whoami` | Show your identity + workspace. |
-| `./teammate-sync teammates` | List all members of your workspace org. |
-| `./teammate-sync install-commands` | Re-install slash commands (e.g. after moving the project). |
-| `./teammate-sync logout` | Delete `~/.teammate-sync/auth.json`. |
+| `teammate-sync init` | First-run setup (steps in section 2). Re-runnable to refresh hooks / slash commands. |
+| `teammate-sync daemon` | Run the sync daemon (foreground). |
+| `teammate-sync share` / `unshare` / `shared` | Same as the slash commands, callable from any shell. |
+| `teammate-sync whoami` | Show your identity + workspace. |
+| `teammate-sync teammates` | List all members of your workspace org. |
+| `teammate-sync install-commands` | Re-install slash commands. |
+| `teammate-sync logout` | Delete `~/.teammate-sync/auth.json`. |
 
 ## Troubleshooting
 
@@ -142,8 +141,9 @@ https://github.com/settings/connections/applications and grant
 `teammate-sync` access to your org.
 
 **`/mcp` shows ✗ Failed to connect:**
-Project lives somewhere Claude Code can't read (TCC). Move it out of
-`~/Downloads/`, `~/Documents/`, `~/Desktop/`.
+The MCP entry was registered with a `teammate-sync` binary that's no
+longer on PATH (e.g. you reinstalled into a different venv). Re-run
+`teammate-sync init` to refresh the registration.
 
 **Daemon hangs on first call:**
 Fly backend cold start takes 5-10s. First request slow, subsequent fast.
@@ -163,6 +163,5 @@ run there. Default is nothing-shared.
 - The daemon watches every project on this machine
 
 Per-session sharing: each `/share` records the session's `cwd` alongside the
-session id. The daemon's per-session filter (Phase 5d) means only the
-sessions you've explicitly shared upload — your unrelated client work
-stays local forever.
+session id. The daemon's per-session filter means only the sessions you've
+explicitly shared upload — your unrelated client work stays local forever.

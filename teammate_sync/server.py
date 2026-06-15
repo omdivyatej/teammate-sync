@@ -19,8 +19,8 @@ from mcp.server.fastmcp import FastMCP
 
 import httpx
 
-from auth import read_auth
-from backend import ACTIVE_SESSIONS_FILENAME, HTTPBackend, StorageBackend
+from .auth import read_auth
+from .backend import ACTIVE_SESSIONS_FILENAME, HTTPBackend, StorageBackend
 
 
 SYNTHESIS_MODEL = os.environ.get("TEAMMATE_SYNTHESIS_MODEL", "claude-sonnet-4-6")
