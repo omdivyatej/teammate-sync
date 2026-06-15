@@ -32,7 +32,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_FILE = "~/penguin-sim/.claude/.shared-sessions.json"
+# IMPORTANT: state/ subdir, NOT ~/.teammate-sync/ root. The daemon watches
+# ~/.teammate-sync/state/ specifically — keeping credentials (auth.json) and
+# other sensitive files OUT of the synced tree.
+DEFAULT_FILE = "~/.teammate-sync/state/.shared-sessions.json"
 TARGET_FILE = Path(
     os.environ.get("TEAMMATE_SHARED_SESSIONS_FILE", DEFAULT_FILE)
 ).expanduser()
@@ -83,21 +86,32 @@ def cmd_share() -> int:
     if not sid:
         return 1
 
+    # Capture cwd so the daemon knows which project this session belongs to.
+    # CLAUDE_PROJECT_DIR is set by Claude Code in Bash subprocesses; fallback
+    # to actual cwd if the env var isn't available.
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or str(Path.cwd())
+
     def mod(state: dict) -> dict:
         sessions = state.get("sessions", [])
-        if not any(isinstance(s, dict) and s.get("session_id") == sid for s in sessions):
-            sessions.append({"session_id": sid, "shared_at": now_iso()})
+        # Replace existing entry for this session_id (refresh cwd / shared_at)
+        sessions = [s for s in sessions
+                    if not (isinstance(s, dict) and s.get("session_id") == sid)]
+        sessions.append({
+            "session_id": sid,
+            "cwd": cwd,
+            "shared_at": now_iso(),
+        })
         state["sessions"] = sessions
         return state
 
     state = update_registry(mod)
     n = len(state["sessions"])
     print(f"✓ Session {sid[:8]} is now shareable with teammates.")
-    print(f"  Shared sessions in this workspace: {n}")
-    print(f"  Watching: {TARGET_FILE}")
+    print(f"  cwd: {cwd}")
+    print(f"  Total shared sessions: {n}")
     print()
-    print("  The teammate-sync daemon will start syncing your workspace to")
-    print("  the team's shared store. Use /unshare to revoke; /shared to audit.")
+    print("  The daemon will sync this session's transcript to your team's")
+    print("  shared store. Use /unshare to revoke; /shared to audit.")
     return 0
 
 

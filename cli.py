@@ -19,6 +19,7 @@ this file, but `python cli.py <cmd>` also works.
 """
 import argparse
 import http.server
+import json
 import socketserver
 import sys
 import time
@@ -34,14 +35,16 @@ from auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
 CALLBACK_TIMEOUT_SECONDS = 180
 
 
-def _install_hooks_into_claude_settings(project_dir: Path, workspace_dir: Path) -> Path:
+def _install_hooks_into_claude_settings(project_dir: Path) -> Path:
     """
     Merge SessionStart / PostToolUse / SessionEnd hooks into ~/.claude/settings.json,
     preserving any other settings already there.
+
+    Hooks write to a global ~/.teammate-sync/active-sessions.json — no
+    workspace path baked in.
     """
     py_bin = project_dir / ".venv" / "bin" / "python"
     hook_script = project_dir / "hook.py"
-    active_file = workspace_dir / ".active-sessions.json"
 
     settings_path = Path("~/.claude/settings.json").expanduser()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,10 +61,7 @@ def _install_hooks_into_claude_settings(project_dir: Path, workspace_dir: Path) 
     for event, op in [("SessionStart", "start"),
                       ("PostToolUse", "heartbeat"),
                       ("SessionEnd", "end")]:
-        cmd = (
-            f"TEAMMATE_ACTIVE_SESSIONS_FILE={active_file} "
-            f"{py_bin} {hook_script} {op}"
-        )
+        cmd = f"{py_bin} {hook_script} {op}"
         hooks[event] = [{"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}]
 
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -213,41 +213,14 @@ def cmd_init(args) -> int:
     print(f"  Workspace: {org}")
     print(f"  Backend:   {backend_url}")
 
-    # --- Workspace dir -------------------------------------------------------
-    default_ws = Path("~/teammate-workspace/.claude").expanduser()
-    print(
-        f"\nPick a workspace directory — this is where your CLAUDE.md and notes\n"
-        f"will live. Files in this directory get mirrored to the team's cloud\n"
-        f"store when you /share a session.\n"
-    )
-    try:
-        ws_input = input(f"Workspace dir [{default_ws}]: ").strip()
-    except EOFError:
-        ws_input = ""
-    workspace_dir = Path(ws_input or str(default_ws)).expanduser().resolve()
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-
-    claude_md = workspace_dir / "CLAUDE.md"
-    if not claude_md.exists():
-        import socket
-        host = socket.gethostname().split(".")[0]
-        claude_md.write_text(
-            f"# Workspace on {host}\n\n"
-            f"Notes and decisions live here. Anything in this directory gets\n"
-            f"mirrored to the team's cloud store when you /share a session.\n\n"
-            f"## Currently working on\n\n"
-            f"(your notes go here)\n"
-        )
-        print(f"  Wrote starter CLAUDE.md at {claude_md}")
-
     # --- Slash commands ------------------------------------------------------
     print("\nInstalling /share /unshare /shared slash commands...")
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
     files = {
-        "share.md":   _slash_command_md("share",   project_dir, workspace_dir),
-        "unshare.md": _slash_command_md("unshare", project_dir, workspace_dir),
-        "shared.md":  _slash_command_md("list",    project_dir, workspace_dir),
+        "share.md":   _slash_command_md("share",   project_dir),
+        "unshare.md": _slash_command_md("unshare", project_dir),
+        "shared.md":  _slash_command_md("list",    project_dir),
     }
     for name, content in files.items():
         (commands_dir / name).write_text(content)
@@ -255,7 +228,7 @@ def cmd_init(args) -> int:
 
     # --- Hooks ---------------------------------------------------------------
     print("\nRegistering Claude Code hooks (SessionStart, PostToolUse, SessionEnd)...")
-    settings_path = _install_hooks_into_claude_settings(project_dir, workspace_dir)
+    settings_path = _install_hooks_into_claude_settings(project_dir)
     print(f"  Merged into {settings_path}")
 
     # --- MCP server ----------------------------------------------------------
@@ -276,12 +249,12 @@ def cmd_init(args) -> int:
     print("\n" + "=" * 60)
     print("✓ Setup complete.")
     print("=" * 60)
-    print(f"\n  Workspace: {workspace_dir}")
-    print(f"  Daemon:    ./start-daemon.sh {workspace_dir}")
-    print(f"\nThree more things you do once:")
-    print(f"  1. Start the daemon (command above), in a terminal you leave open.")
+    print(f"\nTwo more things you do once:")
+    print(f"  1. Start the daemon (leave the terminal open):")
+    print(f"       {project_dir}/start-daemon.sh")
     print(f"  2. Restart any open Claude Code sessions so they pick up the hooks + MCP.")
-    print(f"  3. In a fresh Claude Code session, type /share.")
+    print(f"\nThen from any Claude Code session, anywhere, type /share to share that")
+    print(f"session's transcript with your teammates. /unshare to revoke.")
     return 0
 
 
@@ -330,11 +303,16 @@ def cmd_teammates(args) -> int:
     return 0
 
 
-def _slash_command_md(action: str, project_dir: Path, workspace_dir: Path) -> str:
-    """Generate a slash-command markdown file with paths resolved for this install."""
+def _slash_command_md(action: str, project_dir: Path) -> str:
+    """
+    Generate a slash-command markdown file with paths resolved for this install.
+
+    No workspace path baked in — share-cli uses a global location at
+    ~/.teammate-sync/shared-sessions.json. Slash commands work in any
+    Claude Code session, regardless of cwd.
+    """
     py = project_dir / ".venv" / "bin" / "python"
     cli = project_dir / "share-cli.py"
-    shared_file = workspace_dir / ".shared-sessions.json"
     descriptions = {
         "share":   "Mark this Claude Code session as shareable with teammates via teammate-sync",
         "unshare": "Remove this Claude Code session from teammate-sync sharing",
@@ -349,11 +327,11 @@ Execute this exact command via the Bash tool and show its full stdout
 output to the user verbatim:
 
 ```
-TEAMMATE_SHARED_SESSIONS_FILE={shared_file} {py} {cli} {action}
+{py} {cli} {action}
 ```
 
-The CLAUDE_CODE_SESSION_ID env var is set automatically by Claude Code
-for Bash subprocesses — the script reads it from there.
+The CLAUDE_CODE_SESSION_ID and CLAUDE_PROJECT_DIR env vars are set by
+Claude Code in the Bash subprocess — the script reads them from there.
 
 After showing the output, do NOT add commentary.
 """
@@ -362,19 +340,14 @@ After showing the output, do NOT add commentary.
 def cmd_install_commands(args) -> int:
     """Install /share, /unshare, /shared into ~/.claude/commands/ for this user."""
     project_dir = Path(__file__).resolve().parent
-    workspace_dir = Path(args.workspace).expanduser().resolve()
-
-    if not workspace_dir.exists():
-        print(f"Workspace {workspace_dir} doesn't exist yet. Creating it.")
-        workspace_dir.mkdir(parents=True, exist_ok=True)
 
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
 
     files = {
-        "share.md":   _slash_command_md("share",   project_dir, workspace_dir),
-        "unshare.md": _slash_command_md("unshare", project_dir, workspace_dir),
-        "shared.md":  _slash_command_md("list",    project_dir, workspace_dir),
+        "share.md":   _slash_command_md("share",   project_dir),
+        "unshare.md": _slash_command_md("unshare", project_dir),
+        "shared.md":  _slash_command_md("list",    project_dir),
     }
     for name, content in files.items():
         path = commands_dir / name
@@ -383,8 +356,7 @@ def cmd_install_commands(args) -> int:
 
     print()
     print(f"✓ Installed /share, /unshare, /shared into {commands_dir}")
-    print(f"  Pointing at: project={project_dir}")
-    print(f"               workspace={workspace_dir}")
+    print(f"  Pointing at: {project_dir}")
     print()
     print("Restart any open Claude Code sessions to pick them up.")
     return 0
@@ -419,11 +391,6 @@ def main() -> int:
         "install-commands",
         help="Write /share, /unshare, /shared slash commands into ~/.claude/commands/ "
              "with absolute paths for this install.",
-    )
-    p_install.add_argument(
-        "--workspace", required=True,
-        help="Path to your workspace dir (where CLAUDE.md, scratch notes, and "
-             ".shared-sessions.json live). E.g. ~/my-project/.claude",
     )
     p_install.set_defaults(func=cmd_install_commands)
 

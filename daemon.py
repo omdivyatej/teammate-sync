@@ -356,18 +356,23 @@ class MirrorHandler(FileSystemEventHandler):
 
 def main() -> int:
     print("[sync] main() entered", flush=True)
-    if len(sys.argv) < 2:
-        print("Usage: daemon.py <workspace-dir> [extra-source-dir ...]", file=sys.stderr)
-        return 2
 
-    sources = [Path(arg).expanduser().resolve() for arg in sys.argv[1:]]
-    # Create source dirs if missing — Claude Code's project dir may not exist
-    # until the first session runs. Watchdog can't watch a nonexistent dir.
+    # The daemon is now workspace-less. It watches two fixed locations:
+    #   1. ~/.teammate-sync/state/   — for shared-sessions.json + active-sessions.json
+    #      (subdir, NOT ~/.teammate-sync/ root — auth.json must stay OUT of
+    #      the synced tree)
+    #   2. ~/.claude/projects/       — every Claude Code session jsonl. Per-session
+    #      filter ensures only /share'd sessions actually upload.
+    state_dir = Path("~/.teammate-sync/state").expanduser()
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    sessions_dir = Path("~/.claude/projects").expanduser()
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    # Allow override via argv for testing
+    sources = [Path(a).expanduser().resolve() for a in sys.argv[1:]] or [state_dir, sessions_dir]
     for src in sources:
         src.mkdir(parents=True, exist_ok=True)
-        if not src.is_dir():
-            print(f"Source must be a directory: {src}", file=sys.stderr)
-            return 1
 
     workspace = sources[0]
     print(f"[sync] resolving backend (this may briefly hit the network)...", flush=True)
@@ -382,9 +387,9 @@ def main() -> int:
         return 1
 
     print("[sync] daemon starting", flush=True)
-    print(f"[sync] workspace: {workspace}", flush=True)
+    print(f"[sync] state dir: {workspace}", flush=True)
     for src in sources[1:]:
-        print(f"[sync] extra src: {src}", flush=True)
+        print(f"[sync] watching:  {src}", flush=True)
     print(f"[sync] backend:   {backend!r}", flush=True)
 
     state = DaemonState(workspace, sources, backend)

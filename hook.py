@@ -36,7 +36,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_TARGET = "~/penguin-sim/.claude/.active-sessions.json"
+# IMPORTANT: state/ subdir, NOT ~/.teammate-sync/ root. The daemon watches
+# ~/.teammate-sync/state/ specifically — keeping credentials (auth.json) and
+# other sensitive files OUT of the synced tree.
+DEFAULT_TARGET = "~/.teammate-sync/state/.active-sessions.json"
 TARGET_FILE = Path(
     os.environ.get("TEAMMATE_ACTIVE_SESSIONS_FILE", DEFAULT_TARGET)
 ).expanduser()
