@@ -67,6 +67,23 @@ def anthropic_key_from_mcp() -> str:
     return key
 
 
+def teammate_sync_auth_from_file() -> tuple[str, str, str]:
+    """
+    Read ~/.teammate-sync/auth.json (written by `teammate-sync init`) and
+    return (token, org, backend_url). The VM uses the same token + org for
+    simplicity — Saketh's daemon publishes under whatever GitHub handle the
+    token resolves to, in the same workspace. (For a true two-identity
+    demo, swap in a token from a different GitHub account.)
+    """
+    auth_path = Path("~/.teammate-sync/auth.json").expanduser()
+    if not auth_path.exists():
+        sys.exit(
+            f"Missing {auth_path}. Run `./teammate-sync init` on your Mac first."
+        )
+    data = json.loads(auth_path.read_text())
+    return data["token"], data["org"], data.get("backend_url", "https://teammate-sync-backend.fly.dev")
+
+
 def ensure_ssh_key(lightsail) -> None:
     """Download the default Lightsail keypair if we don't already have it locally."""
     if SSH_KEY_PATH.exists():
@@ -159,12 +176,19 @@ def rsync_project(ip: str) -> None:
     )
 
 
-def run_bootstrap(ip: str, aws_key: str, aws_secret: str, anthropic_key: str) -> None:
+def run_bootstrap(
+    ip: str,
+    github_token: str,
+    github_org: str,
+    backend_url: str,
+    anthropic_key: str,
+) -> None:
     log("running bootstrap on VM (apt + pip + claude install + start daemon)...")
     bootstrap_text = BOOTSTRAP_PATH.read_text()
     env_prefix = (
-        f"AWS_ACCESS_KEY_ID={aws_key} "
-        f"AWS_SECRET_ACCESS_KEY={aws_secret} "
+        f"GITHUB_TOKEN={github_token} "
+        f"GITHUB_ORG={github_org} "
+        f"BACKEND_URL={backend_url} "
         f"ANTHROPIC_API_KEY={anthropic_key}"
     )
     cmd = [
@@ -190,7 +214,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    aws_key, aws_secret = aws_creds_from_file()
+    # The VM authenticates to the teammate-sync backend with a GitHub token.
+    # For testing alone, reuse Om's token — Saketh's daemon will publish under
+    # the same GitHub handle, in the same workspace, but from a different
+    # physical machine. For a true two-identity demo, swap in a second
+    # GitHub account's token by editing ~/.teammate-sync/auth.json before launch.
+    github_token, github_org, backend_url = teammate_sync_auth_from_file()
     anthropic_key = anthropic_key_from_mcp()
 
     lightsail = boto3.client("lightsail", region_name=REGION)
@@ -203,7 +232,7 @@ def main() -> int:
 
     wait_for_ssh(ip)
     rsync_project(ip)
-    run_bootstrap(ip, aws_key, aws_secret, anthropic_key)
+    run_bootstrap(ip, github_token, github_org, backend_url, anthropic_key)
 
     print()
     print("=" * 68)
@@ -216,17 +245,15 @@ def main() -> int:
     print("On the VM:")
     print("  - Daemon runs in screen session 'teammate-daemon'")
     print("    Attach:  screen -r teammate-daemon   (Ctrl-A then D to detach)")
-    print("  - Edit Saketh's workspace: ~/saketh-workspace/.claude/CLAUDE.md")
-    print("  - Start a Claude Code session as Saketh: claude")
+    print("  - Edit workspace: ~/saketh-workspace/.claude/CLAUDE.md")
+    print("  - Start a Claude Code session as Saketh: cd ~/saketh-workspace && claude")
+    print("  - /share inside that session activates the daemon for the team")
     print()
-    print("On YOUR Mac (REQUIRED before testing):")
-    print("  pkill -f 'daemon.py'    # stop your local sim daemon to avoid")
-    print("                          # collisions on the saketh/ S3 prefix")
+    print("On YOUR Mac:")
+    print("  - In any Claude Code session, query the MCP normally")
+    print("  - You'll see the VM's content via the cloud backend (no AWS, no S3)")
     print()
-    print("Then in a new Claude Code session on your Mac, ask the MCP")
-    print("about what Saketh is working on — you'll see VM-side state.")
-    print()
-    print("Teardown when done (~$0):")
+    print("Teardown when done:")
     print(f"  python3 -c \"import boto3; boto3.client('lightsail', region_name='{REGION}').delete_instance(instanceName='{INSTANCE_NAME}')\"")
     print()
     return 0

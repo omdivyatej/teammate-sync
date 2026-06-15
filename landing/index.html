@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>teammate-sync — your team's Claude Code, shared</title>
+  <meta name="description" content="One engineer's Claude Code context, queryable by another engineer's Claude. No pasted transcripts, no GitHub pushes, no shared bucket. One command per session.">
+
+  <meta property="og:title" content="teammate-sync">
+  <meta property="og:description" content="Your team's Claude Code, shared. One command per session, no pasted transcripts.">
+  <meta property="og:type" content="website">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+
+  <style>
+    :root {
+      --bg: #0b0b0e;
+      --bg-elev: #15151a;
+      --bg-card: #1c1c22;
+      --border: #2a2a32;
+      --text: #ececef;
+      --text-dim: #9a9aa3;
+      --text-muted: #6b6b75;
+      --accent: #c8ff45;
+      --accent-dim: #8aa830;
+      --user-color: #7dd3fc;
+      --assistant-color: #c8ff45;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    nav {
+      padding: 1.5rem 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4rem;
+    }
+    nav .brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+    nav .brand::before {
+      content: "▸ ";
+      color: var(--accent);
+    }
+    nav a.gh {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    nav a.gh:hover { color: var(--text); }
+
+    section { margin: 5rem 0; }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin: 0 0 1.25rem;
+      font-weight: 700;
+    }
+    h1 .accent { color: var(--accent); }
+
+    h2 {
+      font-size: 1.65rem;
+      letter-spacing: -0.01em;
+      margin: 0 0 1.25rem;
+      font-weight: 600;
+    }
+    h2::before {
+      content: "## ";
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 400;
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      margin: 1.75rem 0 0.75rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    p {
+      color: var(--text-dim);
+      margin: 0 0 1rem;
+    }
+    p strong { color: var(--text); font-weight: 600; }
+    .lead {
+      font-size: 1.2rem;
+      color: var(--text);
+      margin-bottom: 2rem;
+    }
+
+    a { color: var(--accent); }
+    a:hover { color: #e0ff7d; }
+
+    .cta {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+    .btn {
+      display: inline-block;
+      padding: 0.85rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      text-decoration: none;
+      transition: transform 0.1s ease, background 0.15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary {
+      background: var(--accent);
+      color: #0b0b0e;
+    }
+    .btn-primary:hover { background: #e0ff7d; color: #0b0b0e; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background: var(--bg-elev);
+      color: var(--text);
+    }
+
+    /* Terminal blocks — show the before/after demo */
+    .terminal {
+      background: #0a0a0c;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+      margin: 1.5rem 0;
+    }
+    .terminal .title-bar {
+      display: flex;
+      gap: 0.45rem;
+      margin: -0.25rem -0.5rem 1rem;
+      align-items: center;
+    }
+    .terminal .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #3a3a42;
+    }
+    .terminal .label {
+      margin-left: auto;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-family: 'Inter', sans-serif;
+    }
+    .terminal pre {
+      margin: 0;
+      white-space: pre-wrap;
+      color: var(--text-dim);
+    }
+    .terminal .prompt { color: var(--accent); }
+    .terminal .user { color: var(--user-color); }
+    .terminal .out { color: var(--text); }
+    .terminal .cmt { color: var(--text-muted); font-style: italic; }
+    .terminal .bad { color: #ff7a7a; }
+    .terminal .good { color: var(--accent); }
+
+    /* How-it-works steps */
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.25rem;
+      margin-top: 2rem;
+    }
+    .step {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      display: grid;
+      grid-template-columns: 2.5rem 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+    .step-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .step h3 { margin: 0 0 0.35rem; }
+    .step p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+    .step code {
+      display: inline-block;
+      margin-top: 0.5rem;
+      background: #0a0a0c;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.65rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+
+    /* FAQ */
+    .faq-item {
+      border-top: 1px solid var(--border);
+      padding: 1.5rem 0;
+    }
+    .faq-item:last-child { border-bottom: 1px solid var(--border); }
+    .faq-q {
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 0.5rem;
+      font-size: 1.05rem;
+    }
+    .faq-a { color: var(--text-dim); margin: 0; }
+    .faq-a code {
+      background: var(--bg-elev);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+
+    /* Pricing card */
+    .pricing-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      margin: 1.5rem 0;
+    }
+    .pricing-card .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #0b0b0e;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+    .pricing-card h3 { margin: 0 0 0.5rem; font-size: 1.4rem; }
+    .pricing-card .price {
+      font-size: 1.5rem;
+      color: var(--text);
+      font-weight: 600;
+      margin: 0.5rem 0;
+    }
+    .pricing-card ul { list-style: none; padding: 0; margin: 1rem 0 0; }
+    .pricing-card li {
+      color: var(--text-dim);
+      padding: 0.3rem 0;
+      font-size: 0.95rem;
+    }
+    .pricing-card li::before {
+      content: "✓  ";
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 0 3.5rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    footer a { color: var(--text-dim); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* Inline highlights */
+    .pill {
+      display: inline-block;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85em;
+      color: var(--text);
+    }
+
+    @media (max-width: 600px) {
+      section { margin: 3.5rem 0; }
+      h2 { font-size: 1.4rem; }
+      .terminal { font-size: 0.78rem; padding: 1rem 1.1rem; }
+      .step { grid-template-columns: 2rem 1fr; gap: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <nav>
+    <a href="#" class="brand">teammate-sync</a>
+    <a href="https://github.com/omdivyatej/teammate-sync" class="gh">github →</a>
+  </nav>
+
+  <!-- HERO -->
+  <section style="margin-top: 0;">
+    <h1>Your team's Claude Code, <span class="accent">shared</span>.</h1>
+    <p class="lead">
+      One engineer's Claude context, queryable by another engineer's Claude.
+      No pasted transcripts. No GitHub pushes. No shared bucket setup.
+      One command per session.
+    </p>
+    <div class="cta">
+      <a href="#access" class="btn btn-primary">Request beta access</a>
+      <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">View on GitHub</a>
+    </div>
+  </section>
+
+  <!-- PROBLEM -->
+  <section>
+    <h2>The problem</h2>
+    <p>
+      You and your teammate are both using Claude Code on the same project.
+      You need to know what they decided about the database schema, or which
+      file they touched, or why they picked one library over another.
+    </p>
+    <p>Today you have two bad options:</p>
+
+    <div class="terminal">
+      <div class="title-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">today, without teammate-sync</span>
+      </div>
+<pre>
+<span class="cmt"># Option 1: ping them on Slack and wait</span>
+<span class="user">You:</span>     hey saketh whats the pagination approach for Account?
+<span class="user">Saketh:</span>  brb in a meeting, will get back in an hour
+<span class="bad">(45 minutes later)</span>
+
+<span class="cmt"># Option 2: get them to send their session transcript</span>
+<span class="user">Saketh:</span>  here's my whole .jsonl, 50k lines, good luck
+<span class="user">You:</span>     <span class="cmt">*pastes into Claude*</span>
+<span class="bad">Claude:</span>  context window: 200,000 tokens used. session degraded.
+</pre>
+    </div>
+  </section>
+
+  <!-- SOLUTION -->
+  <section>
+    <h2>What teammate-sync does</h2>
+    <p>
+      Your teammate types <span class="pill">/share</span> in their session.
+      From your own terminal, your Claude can ask theirs anything and gets
+      back a cited answer in three seconds.
+    </p>
+
+    <div class="terminal">
+      <div class="title-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">with teammate-sync</span>
+      </div>
+<pre>
+<span class="prompt">❯</span> <span class="user">Use teammate-sync. What did Saketh decide about pagination for
+   Account, and why?</span>
+
+<span class="cmt">Called teammate-sync (3.1s)</span>
+
+<span class="good">Claude:</span>
+  Cursor-based on Id, NOT offset.
+  Reason: 2.4 million rows with concurrent writes from the integration
+  user made offset pagination produce inconsistent results — rows would
+  skip or double-process. Cursor pagination on Id gives deterministic
+  ordering. Same pattern recommended for Contact lookups.
+
+  <span class="cmt">Cited: saketh/CLAUDE.md, session abc-123 (yesterday 2:14pm)
+  Context cost: ~500 tokens. Saketh was not interrupted.</span>
+</pre>
+    </div>
+
+    <p style="margin-top: 1.5rem;">
+      That is the whole experience. Everything else on this page is the
+      engineering that makes it actually work.
+    </p>
+  </section>
+
+  <!-- WHY NOT GITHUB -->
+  <section>
+    <h2>"Why not just push to GitHub?"</h2>
+    <p>
+      This is the first question every engineer asks. Here is the honest
+      answer with a concrete example.
+    </p>
+
+    <h3 style="margin-top: 2rem;">A real scenario</h3>
+    <p>
+      Saketh is debugging a recursive trigger problem on a Salesforce
+      migration. He has been at it for 90 minutes. <strong>He has not pushed
+      anything to GitHub yet.</strong> Engineers do not push mid-debugging.
+      The work is not done. The commit message would be misleading. The
+      branch would break review.
+    </p>
+    <p>
+      Om hits the same problem 30 minutes later on a different object. He
+      needs to know if Saketh figured it out.
+    </p>
+
+    <p style="margin-top: 1.5rem;"><strong>Without teammate-sync, here is what Om can read from GitHub: nothing.</strong> Saketh has not pushed. Om's choices are:</p>
+    <ul style="color: var(--text-dim); margin-bottom: 1.5rem;">
+      <li>Ping Saketh on Slack and interrupt his flow.</li>
+      <li>Wait until tomorrow when the PR lands and read the sanitized commit message.</li>
+      <li>Try to reverse-engineer the problem from scratch.</li>
+    </ul>
+
+    <p><strong>With teammate-sync, Om types in his Claude:</strong></p>
+
+    <div class="terminal">
+      <div class="title-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">Om's terminal, 11:32am</span>
+      </div>
+<pre>
+<span class="prompt">❯</span> <span class="user">What is Saketh seeing about the recursive trigger right now?</span>
+
+<span class="cmt">Called teammate-sync (3.2s)</span>
+
+<span class="good">Claude:</span>
+  Saketh's most recent message in his session, 94 seconds ago in
+  cwd /Users/saketh/penguin: he found that the Account_History
+  trigger fires on every migration insert, creating a feedback
+  loop. He disabled it before the run with this SOQL:
+
+    UPDATE TriggerHandler__c SET Active__c = false
+    WHERE Object__c = 'Account_History__c';
+
+  Same pattern is likely on Contact_History__c. Expect to disable
+  yours before your Contact migration too.
+
+  <span class="cmt">Cited: saketh's live session, last message 94s ago.
+  Not in GitHub — Saketh has not committed yet.</span>
+</pre>
+    </div>
+
+    <p style="margin-top: 1.5rem;">
+      This is reasoning Saketh has not committed, not documented, not
+      mentioned in Slack. It exists only in his live Claude session, right
+      now. teammate-sync surfaces it the moment Om asks.
+    </p>
+
+    <h3 style="margin-top: 2.5rem;">The three deeper reasons behind this example</h3>
+
+    <p>
+      <strong>1. Most reasoning never reaches a commit.</strong>
+      Engineers iterate dozens of times for every commit. The dead ends,
+      the experiments, the "wait let me try X" moments — that is where the
+      actual knowledge lives. Git ignores all of it.
+    </p>
+
+    <p>
+      <strong>2. Commits show the decision, not the reasoning.</strong>
+      "Use cursor pagination" is a one-line commit. The 90 minutes of
+      figuring out why offset failed first is what your teammate actually
+      needs when they hit the same fork in the road.
+    </p>
+
+    <p>
+      <strong>3. PR-reviewed code is sanitized.</strong>
+      By the time something lands in main, the messy real reasoning has
+      been edited out for "code quality." The questions, the alternatives
+      considered, the bug that was almost shipped — gone. Your teammate
+      will hit those exact same questions next week with no record they
+      were ever asked.
+    </p>
+
+    <p style="margin-top: 1.75rem;">
+      <strong>The one-line version:</strong> GitHub captures the finished
+      work that survives review. teammate-sync captures the live reasoning
+      that produced it — including the parts your teammate is figuring out
+      right now, this second.
+    </p>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section>
+    <h2>How it works</h2>
+    <p>Four steps. One-time setup is under two minutes per engineer.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div>
+          <h3>Sign in with GitHub</h3>
+          <p>Your workspace is your GitHub org. We discover your teammates from there. No new account, no manual invites.</p>
+          <code>./teammate-sync init</code>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div>
+          <h3>Run the daemon</h3>
+          <p>A tiny background process watches your workspace. Nothing leaves your machine until you explicitly opt in.</p>
+          <code>./start-daemon.sh</code>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div>
+          <h3>Share a session</h3>
+          <p>In any Claude Code session, type the slash command. Your CLAUDE.md and that session's transcript become queryable by your org. Other sessions stay completely private.</p>
+          <code>/share</code>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div>
+          <h3>Your teammates query you</h3>
+          <p>Their Claude calls your context with natural language. Gets back a cited synthesis in seconds. You are never interrupted. Their context window never bloats.</p>
+          <code>Use teammate-sync, what did X decide about Y?</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section>
+    <h2>Frequently asked</h2>
+
+    <div class="faq-item">
+      <p class="faq-q">Is this a cloud agent or autonomous AI?</p>
+      <p class="faq-a">
+        No. The Claude Code on each engineer's laptop is the agent. We
+        are connective tissue between humans and their Claudes. No
+        autonomous work, no inference billed by us, no replacement for
+        your existing workflow.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <p class="faq-q">What about privacy? My client work is sensitive.</p>
+      <p class="faq-a">
+        Default is nothing shared. Sessions only sync when you explicitly
+        type <code>/share</code>. Unshared sessions never leave your
+        machine. When you <code>/unshare</code>, the cloud copy is wiped
+        in one operation. Per-session granularity means your unrelated
+        client work stays local forever.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <p class="faq-q">Do I need AWS or any other accounts?</p>
+      <p class="faq-a">
+        No. The only account you need is GitHub — which your engineers
+        already have. No bucket setup, no IAM roles, no static
+        credentials anywhere on the engineer's machine.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <p class="faq-q">Can I see who queried what?</p>
+      <p class="faq-a">
+        Audit log is on the roadmap for the team plan. Every request
+        passes through one server with verified GitHub identity, so the
+        data is captured. Surfacing it as a clean log is a near-term
+        item.
+      </p>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section>
+    <h2>Pricing</h2>
+    <p>Pre-launch. Free during beta. At general availability:</p>
+
+    <div class="pricing-card">
+      <span class="badge">team plan</span>
+      <h3>Bring your own Anthropic key</h3>
+      <div class="price">$20 / engineer / month</div>
+      <p style="margin-top: 0.5rem;">You pay Anthropic for inference. We charge for the platform — hosting, identity, audit, ACLs, multi-source connectors.</p>
+      <ul>
+        <li>GitHub-org-based workspaces</li>
+        <li>Per-session privacy controls</li>
+        <li>Cited synthesis from teammates' Claude Code sessions</li>
+        <li>Slack and Linear integrations (planned)</li>
+        <li>Audit log of all queries (planned)</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 0.9rem; color: var(--text-muted);">
+      Enterprise plan with SSO, SOC2, and on-prem deployment available later.
+      Email om at turgon.ai for early access pricing.
+    </p>
+  </section>
+
+  <!-- ACCESS / CTA -->
+  <section id="access">
+    <h2>Request beta access</h2>
+    <p>
+      We are taking on 3 engineering teams for the closed beta over the
+      next two weeks. Best fit: 3 to 15 engineers, all on Claude Code,
+      same GitHub org.
+    </p>
+    <p>
+      Email <a href="mailto:om@turgon.ai?subject=teammate-sync beta">om at turgon.ai</a>
+      with your team size and what you use Claude Code for. We will reply
+      within 24 hours with setup instructions.
+    </p>
+    <div class="cta">
+      <a href="mailto:om@turgon.ai?subject=teammate-sync beta&body=Team size:%0AWhat we use Claude Code for:%0AGitHub org name (if you want to share):" class="btn btn-primary">Email for beta access</a>
+      <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">Read the code</a>
+    </div>
+  </section>
+
+  <footer>
+    <div>
+      Built by <a href="https://twitter.com/omdivyatej">Om Divyatej</a>.
+      Born out of a real Salesforce migration headache.
+    </div>
+    <div>
+      <a href="https://github.com/omdivyatej/teammate-sync">github</a> ·
+      <a href="mailto:om@turgon.ai">email</a>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

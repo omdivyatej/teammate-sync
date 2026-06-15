@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# Launch the teammate-sync daemon with the S3 backend pointed at our test bucket.
-# Run from anywhere: bash start-daemon.sh (or ./start-daemon.sh after chmod +x).
+# Launch the teammate-sync daemon (cloud backend by default).
+#
+# Auth comes from ~/.teammate-sync/auth.json (written by `teammate-sync init`).
+# No env vars required, no AWS creds anywhere.
+#
+# Usage:
+#   ./start-daemon.sh                 # uses defaults (~/penguin-sim/.claude, ~/.claude/projects)
+#   ./start-daemon.sh <workspace>     # override workspace dir
+#   ./start-daemon.sh <workspace> <sessions>   # also override sessions dir
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export TEAMMATE_BACKEND=s3
-export TEAMMATE_S3_BUCKET=teammate-sync-omdivyatej
-export TEAMMATE_S3_PREFIX=saketh/
-export AWS_REGION=ap-southeast-1
+WORKSPACE_DIR="${1:-$HOME/om-sim/.claude}"
+SESSIONS_DIR="${2:-$HOME/.claude/projects}"
 
-SOURCE_DIR="${1:-$HOME/penguin-sim/.claude}"
+mkdir -p "${WORKSPACE_DIR}" "${SESSIONS_DIR}"
 
-echo "Starting daemon with S3 backend → s3://${TEAMMATE_S3_BUCKET}/${TEAMMATE_S3_PREFIX}"
-echo "Watching: ${SOURCE_DIR}"
+echo "Starting teammate-sync daemon (cloud backend)"
+echo "Workspace: ${WORKSPACE_DIR}"
+echo "Sessions:  ${SESSIONS_DIR}"
+echo "Auth:      ${TEAMMATE_AUTH_FILE:-$HOME/.teammate-sync/auth.json}"
 echo "Ctrl+C to stop."
 echo
 
-exec .venv/bin/python daemon.py "${SOURCE_DIR}"
+exec .venv/bin/python daemon.py "${WORKSPACE_DIR}" "${SESSIONS_DIR}"

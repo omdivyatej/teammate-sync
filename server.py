@@ -12,11 +12,15 @@ see backend.py.
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 from anthropic import Anthropic
 from mcp.server.fastmcp import FastMCP
 
-from backend import ACTIVE_SESSIONS_FILENAME, StorageBackend, make_backend_from_env
+import httpx
+
+from auth import read_auth
+from backend import ACTIVE_SESSIONS_FILENAME, HTTPBackend, StorageBackend
 
 
 SYNTHESIS_MODEL = os.environ.get("TEAMMATE_SYNTHESIS_MODEL", "claude-sonnet-4-6")
@@ -28,8 +32,7 @@ STALE_THRESHOLD_SECONDS = 30 * 60  # 30 minutes
 
 mcp = FastMCP("teammate-sync")
 anthropic_client = Anthropic()
-_BACKEND: StorageBackend = make_backend_from_env()
-print(f"[server] backend: {_BACKEND!r}", flush=True)
+print("[server] backend-mediated mode — auth from ~/.teammate-sync/auth.json", flush=True)
 
 
 SYNTHESIS_PROMPT_TEMPLATE = """You are reading a teammate's Claude Code working corpus to answer a coworker's question.
@@ -37,8 +40,14 @@ SYNTHESIS_PROMPT_TEMPLATE = """You are reading a teammate's Claude Code working 
 A coworker asks: {question}
 
 Below is the teammate's corpus, in two parts:
-  1. ACTIVE SESSIONS — live state from the teammate's currently-running Claude Code processes (cwd, last activity time). Use this for questions about what they are doing right NOW.
-  2. PERSISTENT CORPUS — their CLAUDE.md, session transcripts, and scratch notes. Use this for historical or factual questions.
+  1. ACTIVE SESSIONS — live process state (cwd, last activity time) of the teammate's currently-running Claude Code processes.
+  2. PERSISTENT CORPUS — their CLAUDE.md, session transcripts, and scratch notes.
+
+Session ordering: each session transcript is labelled with one of:
+  - [ACTIVE — LIVE NOW]: the session the teammate is currently typing in. Prefer this for questions about "right now", "most recent message", or "what is he saying."
+  - [MOST RECENT SESSION]: the highest-timestamp session if none is currently active.
+  - [older session #N]: historical, deprioritize unless explicitly asked about the past.
+Each header also has a `last message <timestamp>` so you can verify chronology yourself.
 
 CORPUS:
 {corpus}
@@ -46,7 +55,8 @@ CORPUS:
 Instructions:
 - Answer ONLY the asked question. Do not summarize the corpus broadly.
 - Be concise — under 500 words.
-- CITE the source for every factual claim, e.g. "(CLAUDE.md)", "(session abc-123, message about the recursive trigger)", or "(active sessions: session abc-123)".
+- CITE the specific source for every factual claim: file name (e.g. "CLAUDE.md"), or session id with the marker (e.g. "session abc-123 [ACTIVE — LIVE NOW]").
+- For "most recent" questions, the [ACTIVE — LIVE NOW] session OR the [MOST RECENT SESSION] should be your primary source. If you cite an [older session #N] for a "most recent" question, you're wrong.
 - If the corpus does not contain the answer, say exactly: "Not found in shared context."
 - Do not speculate beyond what is written in the corpus.
 - Do not include preamble like "Based on the corpus..." — just answer.
@@ -54,17 +64,28 @@ Instructions:
 Answer:"""
 
 
-def render_jsonl_session(filename: str, content: bytes) -> str:
+def _parse_iso_epoch(ts: str) -> float | None:
+    """Parse an ISO-8601 timestamp string to an epoch float. None on failure."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
     """
-    Render a Claude Code session jsonl file (as bytes) into readable text.
-    Extracts user prompts, assistant text, and a compact summary of tool
-    use / tool results.
+    Render a Claude Code session jsonl file (as bytes) into readable text,
+    and return the max message timestamp found (epoch) so the caller can
+    sort sessions by recency.
     """
     rendered_lines: list[str] = []
+    max_epoch = 0.0
     try:
         text = content.decode("utf-8", errors="replace")
     except Exception as e:
-        return f"[Error decoding {filename}: {e}]"
+        return f"[Error decoding {filename}: {e}]", 0.0
 
     for raw_line in text.splitlines():
         raw_line = raw_line.strip()
@@ -74,6 +95,10 @@ def render_jsonl_session(filename: str, content: bytes) -> str:
             obj = json.loads(raw_line)
         except json.JSONDecodeError:
             continue
+
+        ts_epoch = _parse_iso_epoch(obj.get("timestamp", ""))
+        if ts_epoch and ts_epoch > max_epoch:
+            max_epoch = ts_epoch
 
         msg_type = obj.get("type", "?")
         message = obj.get("message")
@@ -114,7 +139,7 @@ def render_jsonl_session(filename: str, content: bytes) -> str:
         if combined:
             rendered_lines.append(f"[{msg_type}] {combined}")
 
-    return "\n\n".join(rendered_lines)
+    return "\n\n".join(rendered_lines), max_epoch
 
 
 def format_age(seconds: float) -> str:
@@ -152,6 +177,34 @@ def format_active_sessions(raw: bytes) -> str:
     return "\n".join(lines)
 
 
+def _get_active_session_id(backend: StorageBackend) -> str | None:
+    """
+    Read .active-sessions.json and return the session_id of the most recently
+    active session, used to flag the live session in the corpus.
+    """
+    raw = backend.get_bytes(ACTIVE_SESSIONS_FILENAME)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    sessions = data.get("sessions", [])
+    if not isinstance(sessions, list) or not sessions:
+        return None
+    # Pick the one with the most recent last_activity_epoch
+    best = None
+    best_epoch = -1.0
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        epoch = s.get("last_activity_epoch")
+        if isinstance(epoch, (int, float)) and epoch > best_epoch:
+            best_epoch = epoch
+            best = s.get("session_id")
+    return best
+
+
 def load_corpus(backend: StorageBackend) -> str:
     """
     Read all relevant content from the backend and return a single text blob
@@ -177,15 +230,40 @@ def load_corpus(backend: StorageBackend) -> str:
         if content is not None:
             sections.append(f"=== CLAUDE.md ===\n{content.decode('utf-8', errors='replace')}")
 
-    # Session jsonl files
-    jsonl_keys = [k for k in keys if k.endswith(".jsonl")]
-    for key in sorted(jsonl_keys):
+    # Session jsonl files — sort by most-recent-message timestamp, newest first,
+    # and explicitly mark the currently-active session so synthesis can prefer
+    # it for "right now" / "most recent" questions.
+    active_session_id = _get_active_session_id(backend)
+
+    rendered_sessions: list[tuple[float, str, str]] = []  # (epoch, key, rendered)
+    for key in [k for k in keys if k.endswith(".jsonl")]:
         content = backend.get_bytes(key)
         if content is None:
             continue
-        rendered = render_jsonl_session(key, content)
+        rendered, last_epoch = render_jsonl_session(key, content)
         if rendered:
-            sections.append(f"=== Session: {key} ===\n{rendered}")
+            rendered_sessions.append((last_epoch, key, rendered))
+
+    rendered_sessions.sort(key=lambda t: t[0], reverse=True)
+
+    for rank, (epoch, key, rendered) in enumerate(rendered_sessions):
+        sid = key[:-len(".jsonl")] if key.endswith(".jsonl") else key
+        # Session jsonls come from nested project dirs like
+        # "-home-ubuntu/<uuid>"; the active-sessions registry stores raw UUIDs.
+        # Compare on the last path component.
+        sid_uuid = sid.split("/")[-1]
+        if active_session_id and sid_uuid == active_session_id:
+            label = "ACTIVE — LIVE NOW"
+        elif rank == 0:
+            label = "MOST RECENT SESSION"
+        else:
+            label = f"older session #{rank + 1}"
+        if epoch > 0:
+            ts_str = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+            header = f"=== Session {sid} [{label}] — last message {ts_str} ==="
+        else:
+            header = f"=== Session {sid} [{label}] ==="
+        sections.append(f"{header}\n{rendered}")
 
     # Other .md files (scratch notes), skipping CLAUDE.md (already included)
     other_md = [k for k in keys if k.endswith(".md") and k != "CLAUDE.md"]
@@ -222,28 +300,68 @@ def get_sync_freshness(backend: StorageBackend) -> dict | None:
 
 
 @mcp.tool()
-def query_teammate_context(question: str) -> str:
-    """Query a teammate's Claude Code working context.
+def list_teammates() -> list[str]:
+    """List all teammates in your workspace whose Claude Code context is queryable.
 
-    Use this tool when you need to know what a teammate has decided, discovered,
-    or is working on in their Claude Code sessions. The tool reads their
-    CLAUDE.md, session transcripts, and scratch notes, then returns a
-    synthesized, cited answer (~500 words) drawn ONLY from their actual corpus.
-
-    If the answer is not in the corpus, the tool returns:
-    "Not found in shared context."
-
-    Args:
-        question: A natural-language question about the teammate's work.
-                  Be specific — e.g., "What did they decide about cursor-based
-                  pagination?" rather than "Tell me everything they did."
+    Workspace = the GitHub organization configured in your auth file. Returns
+    the GitHub handles of all org members. They may not have shared anything
+    yet — try query_teammate_context to see.
 
     Returns:
-        A cited, synthesized answer string with a freshness stamp.
+        Sorted list of GitHub handles. Empty list if you're the only member
+        or the OAuth app hasn't been approved for your org.
     """
-    corpus = load_corpus(_BACKEND)
+    try:
+        auth = read_auth()
+        r = httpx.get(
+            f"{auth['backend_url'].rstrip('/')}/v1/teammates",
+            params={"org": auth["org"]},
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=20.0,
+        )
+        r.raise_for_status()
+        return sorted(t["github_handle"] for t in r.json().get("teammates", []))
+    except Exception as e:
+        return [f"[Error: {e}]"]
+
+
+@mcp.tool()
+def query_teammate_context(teammate: str, question: str) -> str:
+    """Query a specific teammate's Claude Code working context.
+
+    Reads the named teammate's CLAUDE.md, session transcripts, and scratch
+    notes from the shared cloud backend, then returns a synthesized, cited
+    answer (~500 words) drawn ONLY from their actual corpus.
+
+    If you don't know who's available, call list_teammates() first.
+
+    If the answer is not in the corpus (or the teammate hasn't /share'd
+    anything yet), the tool returns: "Not found in shared context."
+
+    Args:
+        teammate: The teammate's GitHub handle (e.g. "saketh"). Case-sensitive.
+        question: A natural-language question. Be specific — e.g.
+                  "What did they decide about cursor-based pagination?"
+                  rather than "Tell me everything they did."
+
+    Returns:
+        A cited, synthesized answer string with a freshness stamp,
+        prefixed with the teammate's handle.
+    """
+    try:
+        auth = read_auth()
+        backend = HTTPBackend(
+            backend_url=auth["backend_url"],
+            token=auth["token"],
+            org=auth["org"],
+            teammate=teammate,
+        )
+    except (FileNotFoundError, ValueError) as e:
+        return f"[Error: {e}]"
+
+    corpus = load_corpus(backend)
     if corpus.startswith("[Error"):
-        return corpus
+        return f"[{teammate}] {corpus}"
 
     prompt = SYNTHESIS_PROMPT_TEMPLATE.format(question=question, corpus=corpus)
 
@@ -260,22 +378,22 @@ def query_teammate_context(question: str) -> str:
             break
 
     if answer is None:
-        return "[Error: synthesis returned no text]"
+        return f"[{teammate}] [Error: synthesis returned no text]"
 
-    freshness = get_sync_freshness(_BACKEND)
+    freshness = get_sync_freshness(backend)
     if freshness is None:
-        return answer
+        return f"[from {teammate}]\n\n{answer}"
 
     age_str = format_age(freshness["age_seconds"])
     if freshness["is_stale"]:
         prefix = (
-            f"⚠️  Stale sync warning: teammate's corpus was last "
+            f"⚠️  Stale sync warning: {teammate}'s corpus was last "
             f"updated {age_str}. Information below may be outdated.\n\n"
         )
-        suffix = f"\n\n— teammate's context as of {age_str}"
+        suffix = f"\n\n— {teammate}'s context as of {age_str}"
         return prefix + answer + suffix
 
-    return f"{answer}\n\n— teammate's context as of {age_str}"
+    return f"[from {teammate}]\n\n{answer}\n\n— {teammate}'s context as of {age_str}"
 
 
 if __name__ == "__main__":

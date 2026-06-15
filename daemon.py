@@ -2,12 +2,20 @@
 """
 teammate-sync daemon.
 
-Watches a source directory (a teammate's Claude Code workspace) and mirrors
-changes to whichever storage backend is configured via env vars (local
-filesystem or S3).
+Watches one or more source directories and mirrors changes to whichever
+storage backend is configured via env vars. The first source is the
+"workspace" — that's where control files (.shared-sessions.json,
+.active-sessions.json) live and where the daemon checks share-mode.
+Additional sources are extra content to mirror (e.g., the user's
+Claude Code session jsonl dir at ~/.claude/projects/<encoded-cwd>/).
 
 Usage:
-    python daemon.py <source-dir>
+    python daemon.py <workspace-dir> [extra-source-dir ...]
+
+Example (VM as Saketh):
+    daemon.py \\
+      /home/ubuntu/saketh-workspace/.claude \\
+      /home/ubuntu/.claude/projects/-home-ubuntu-saketh-workspace
 
 Env vars (consumed by backend.make_backend_from_env):
     TEAMMATE_BACKEND          local | s3   (default: local)
@@ -21,11 +29,6 @@ Env vars (consumed by backend.make_backend_from_env):
         AWS_REGION            e.g. ap-southeast-1
         AWS_ACCESS_KEY_ID
         AWS_SECRET_ACCESS_KEY
-
-Example:
-    TEAMMATE_BACKEND=s3 TEAMMATE_S3_BUCKET=teammate-sync-omdivyatej \\
-      TEAMMATE_S3_PREFIX=saketh/ AWS_REGION=ap-southeast-1 \\
-      python daemon.py ~/penguin-sim/.claude
 """
 import json
 import signal
@@ -47,50 +50,95 @@ from backend import (
 
 DEBOUNCE_SECONDS = 0.3
 # Skip transient/process-local files (lock files, atomic-write tempfiles).
-# These should never reach the backend.
 SKIP_SUFFIXES = (".lock", ".tmp")
+# A Claude Code session jsonl is named <uuid>.jsonl. We use this to gate
+# uploads from the "sessions" source so only explicitly /share'd sessions
+# leave the engineer's machine — never their unrelated client work.
+import re as _re
+
+_UUID_RE = _re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
-def is_share_mode_active(source: Path) -> bool:
+def extract_session_id_from_path(rel_path: str) -> str | None:
+    """Returns the session UUID if the file's basename is <uuid>.jsonl, else None."""
+    name = Path(rel_path).name
+    if not name.endswith(".jsonl"):
+        return None
+    candidate = name[: -len(".jsonl")]
+    return candidate if _UUID_RE.match(candidate) else None
+
+
+def read_shared_session_ids(workspace: Path) -> set[str]:
     """
-    The daemon is gated on .shared-sessions.json — until at least one session
-    in this workspace is marked /shared, the daemon does NOT upload anything
-    to the backend. This is the privacy default.
+    Returns the set of session_ids currently /share'd in this workspace.
+    Empty set if no .shared-sessions.json, or it's malformed, or has no sessions.
     """
-    shared_file = source / SHARED_SESSIONS_FILENAME
+    shared_file = workspace / SHARED_SESSIONS_FILENAME
     if not shared_file.exists():
-        return False
+        return set()
     try:
         data = json.loads(shared_file.read_text())
     except (json.JSONDecodeError, OSError):
-        return False
+        return set()
     sessions = data.get("sessions", [])
-    return isinstance(sessions, list) and len(sessions) > 0
+    if not isinstance(sessions, list):
+        return set()
+    return {
+        s["session_id"]
+        for s in sessions
+        if isinstance(s, dict) and isinstance(s.get("session_id"), str)
+    }
 
 
-def initial_sync(source: Path, backend: StorageBackend) -> int:
+def is_share_mode_active(workspace: Path) -> bool:
+    """Backwards-compat helper. True iff at least one session is /share'd."""
+    return bool(read_shared_session_ids(workspace))
+
+
+def initial_sync_all(
+    sources: list[Path],
+    backend: StorageBackend,
+    shared_session_ids: set[str],
+    workspace_index: int = 0,
+) -> int:
     """
-    Mirror source into backend. Returns count of files written.
-    Deletes keys in the backend that are absent from the source (mirror semantics).
-    Skips .shared-sessions.json (local-only permission gate, never uploaded).
+    Mirror sources into backend. Source at workspace_index is the "workspace"
+    (CLAUDE.md, scratch notes, etc.) — every non-skipped file uploads. Other
+    sources are "sessions" — only files whose basename is <uuid>.jsonl AND
+    whose uuid is in shared_session_ids upload. Anything else is skipped
+    (privacy: unrelated Claude Code work never leaves the machine).
+
+    Single deletion pass at the end prunes backend keys absent from the
+    filtered source set.
+
+    Returns count of files written.
     """
     written = 0
-    source_keys: set[str] = set()
+    all_source_keys: set[str] = set()
 
-    for src_file in source.rglob("*"):
-        if not src_file.is_file():
-            continue
-        if src_file.name.endswith(SKIP_SUFFIXES):
-            continue
-        if src_file.name == SHARED_SESSIONS_FILENAME:
-            continue  # local-only, never upload
-        rel = str(src_file.relative_to(source))
-        source_keys.add(rel)
-        backend.put_bytes(rel, src_file.read_bytes())
-        written += 1
+    for i, source in enumerate(sources):
+        is_workspace = i == workspace_index
+        for src_file in source.rglob("*"):
+            if not src_file.is_file():
+                continue
+            if src_file.name.endswith(SKIP_SUFFIXES):
+                continue
+            if src_file.name == SHARED_SESSIONS_FILENAME:
+                continue  # local-only permission gate
+
+            rel = str(src_file.relative_to(source))
+
+            if not is_workspace:
+                sid = extract_session_id_from_path(rel)
+                if not sid or sid not in shared_session_ids:
+                    continue  # not a /share'd session — skip
+
+            all_source_keys.add(rel)
+            backend.put_bytes(rel, src_file.read_bytes())
+            written += 1
 
     for existing_key in backend.list_keys():
-        if existing_key not in source_keys:
+        if existing_key not in all_source_keys:
             backend.delete_key(existing_key)
 
     backend.put_state()
@@ -99,10 +147,19 @@ def initial_sync(source: Path, backend: StorageBackend) -> int:
 
 def cleanup_backend(backend: StorageBackend) -> int:
     """
-    Delete every object the backend exposes plus the control files. Called
-    when share-mode transitions from active → inactive (last /unshare wins).
-    Returns count of deletes.
+    Delete everything in the backend (corpus + control files). Called when
+    share-mode goes active → inactive (last /unshare wins).
+
+    Uses backend.purge_owner() (single call) if available — HTTPBackend
+    supports this. Otherwise falls back to a list+delete loop.
     """
+    purge = getattr(backend, "purge_owner", None)
+    if callable(purge):
+        try:
+            return purge()
+        except Exception as e:
+            print(f"[sync] purge_owner failed, falling back to loop: {e}", flush=True)
+
     n = 0
     for key in backend.list_keys():
         backend.delete_key(key)
@@ -115,14 +172,78 @@ def cleanup_backend(backend: StorageBackend) -> int:
     return n
 
 
-class MirrorHandler(FileSystemEventHandler):
-    def __init__(self, source: Path, backend: StorageBackend):
-        self.source = source
+class DaemonState:
+    """
+    Shared state across all source watchers. Owns the shared-session set,
+    runs cross-source initial_sync / cleanup on transitions.
+    """
+
+    def __init__(self, workspace: Path, sources: list[Path], backend: StorageBackend):
+        self.workspace = workspace
+        self.sources = sources
         self.backend = backend
         self._lock = threading.Lock()
+        self.shared_session_ids: set[str] = read_shared_session_ids(workspace)
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.shared_session_ids)
+
+    def reconcile_shared_sessions(self) -> None:
+        """
+        Called when .shared-sessions.json changes. Computes the new
+        shared-session set and reacts:
+          - empty → has sessions: ACTIVATE + initial_sync_all
+          - has sessions → empty: DEACTIVATE + cleanup_backend
+          - changed contents (both non-empty): re-run initial_sync_all
+            (its mirror semantics drop now-unshared session jsonls from
+            backend in the deletion pass)
+        """
+        with self._lock:
+            new_set = read_shared_session_ids(self.workspace)
+            old_set = self.shared_session_ids
+
+            if not old_set and new_set:
+                print(
+                    f"[sync] share-mode ACTIVATED ({len(new_set)} session(s) shared) → "
+                    f"uploading workspace + shared sessions",
+                    flush=True,
+                )
+                self.shared_session_ids = new_set
+                n = initial_sync_all(self.sources, self.backend, new_set)
+                print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
+            elif old_set and not new_set:
+                print("[sync] share-mode DEACTIVATED → cleaning backend", flush=True)
+                n = cleanup_backend(self.backend)
+                self.shared_session_ids = new_set  # empty
+                print(f"[sync] backend cleaned: {n} objects removed", flush=True)
+            elif old_set != new_set:
+                added = new_set - old_set
+                removed = old_set - new_set
+                print(
+                    f"[sync] shared set changed (+{len(added)} -{len(removed)}) → reconciling",
+                    flush=True,
+                )
+                self.shared_session_ids = new_set
+                n = initial_sync_all(self.sources, self.backend, new_set)
+                print(f"[sync] reconciliation complete: {n} files in sync", flush=True)
+
+
+class MirrorHandler(FileSystemEventHandler):
+    """
+    Per-source watcher. Uploads events to backend when share-mode is active
+    AND (for non-workspace sources) the file belongs to a /share'd session.
+    """
+
+    def __init__(self, source: Path, state: DaemonState, is_workspace: bool):
+        self.source = source
+        self.state = state
+        # If True, this handler watches the workspace dir — all non-skip files
+        # sync. If False, it watches a sessions dir — only /share'd session
+        # jsonls sync.
+        self.is_workspace = is_workspace
+        self._lock = threading.Lock()
         self._pending_timer: threading.Timer | None = None
-        # Track previous share-mode state to detect transitions
-        self._was_active = is_share_mode_active(self.source)
 
     def _rel_key(self, src_path: str) -> str:
         return str(Path(src_path).relative_to(self.source))
@@ -133,24 +254,17 @@ class MirrorHandler(FileSystemEventHandler):
     def _is_share_state_file(self, src_path: str) -> bool:
         return Path(src_path).name == SHARED_SESSIONS_FILENAME
 
-    def _handle_share_state_change(self) -> bool:
+    def _is_allowed_for_session_filter(self, key: str) -> bool:
         """
-        Re-read .shared-sessions.json and react to transitions:
-          - inactive → active: initial_sync (populate backend)
-          - active → inactive: cleanup_backend (wipe team store)
-        Returns the new active state.
+        For sessions sources (not workspace): allow only files whose
+        session_id is currently /share'd. Skip everything else.
         """
-        now_active = is_share_mode_active(self.source)
-        if now_active and not self._was_active:
-            print("[sync] share-mode ACTIVATED → uploading workspace to backend", flush=True)
-            n = initial_sync(self.source, self.backend)
-            print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
-        elif self._was_active and not now_active:
-            print("[sync] share-mode DEACTIVATED → cleaning backend", flush=True)
-            n = cleanup_backend(self.backend)
-            print(f"[sync] backend cleaned: {n} objects removed", flush=True)
-        self._was_active = now_active
-        return now_active
+        if self.is_workspace:
+            return True
+        sid = extract_session_id_from_path(key)
+        if sid is None:
+            return False  # not a session jsonl — skip silently
+        return sid in self.state.shared_session_ids
 
     def _schedule_state_write(self) -> None:
         with self._lock:
@@ -158,7 +272,7 @@ class MirrorHandler(FileSystemEventHandler):
                 self._pending_timer.cancel()
             self._pending_timer = threading.Timer(
                 DEBOUNCE_SECONDS,
-                self.backend.put_state,
+                self.state.backend.put_state,
             )
             self._pending_timer.daemon = True
             self._pending_timer.start()
@@ -167,7 +281,7 @@ class MirrorHandler(FileSystemEventHandler):
         try:
             key = self._rel_key(src_path)
             data = Path(src_path).read_bytes()
-            self.backend.put_bytes(key, data)
+            self.state.backend.put_bytes(key, data)
             print(f"[sync] {label} → {key}", flush=True)
             self._schedule_state_write()
         except Exception as e:
@@ -177,9 +291,12 @@ class MirrorHandler(FileSystemEventHandler):
         if event.is_directory or self._should_skip(event.src_path):
             return
         if self._is_share_state_file(event.src_path):
-            self._handle_share_state_change()
+            self.state.reconcile_shared_sessions()
             return
-        if not self._was_active:
+        if not self.state.is_active:
+            return
+        key = self._rel_key(event.src_path)
+        if not self._is_allowed_for_session_filter(key):
             return
         self._upload(event.src_path, "created")
 
@@ -187,9 +304,12 @@ class MirrorHandler(FileSystemEventHandler):
         if event.is_directory or self._should_skip(event.src_path):
             return
         if self._is_share_state_file(event.src_path):
-            self._handle_share_state_change()
+            self.state.reconcile_shared_sessions()
             return
-        if not self._was_active:
+        if not self.state.is_active:
+            return
+        key = self._rel_key(event.src_path)
+        if not self._is_allowed_for_session_filter(key):
             return
         self._upload(event.src_path, "modified")
 
@@ -197,13 +317,15 @@ class MirrorHandler(FileSystemEventHandler):
         if event.is_directory or self._should_skip(event.src_path):
             return
         if self._is_share_state_file(event.src_path):
-            self._handle_share_state_change()
+            self.state.reconcile_shared_sessions()
             return
-        if not self._was_active:
+        if not self.state.is_active:
             return
+        key = self._rel_key(event.src_path)
+        # Always allow deletes for backend hygiene — even if filter would
+        # reject the upload, we don't want stale keys lingering.
         try:
-            key = self._rel_key(event.src_path)
-            self.backend.delete_key(key)
+            self.state.backend.delete_key(key)
             print(f"[sync] deleted → {key}", flush=True)
             self._schedule_state_write()
         except Exception as e:
@@ -213,17 +335,19 @@ class MirrorHandler(FileSystemEventHandler):
         if event.is_directory or self._should_skip(event.dest_path):
             return
         if self._is_share_state_file(event.dest_path) or self._is_share_state_file(event.src_path):
-            self._handle_share_state_change()
+            self.state.reconcile_shared_sessions()
             return
-        if not self._was_active:
+        if not self.state.is_active:
             return
         try:
             old_key = self._rel_key(event.src_path)
             new_key = self._rel_key(event.dest_path)
-            # Backends don't have a native rename; copy then delete.
-            data = Path(event.dest_path).read_bytes()
-            self.backend.put_bytes(new_key, data)
-            self.backend.delete_key(old_key)
+            # Apply the filter to the destination — if the new path is not
+            # an allowed session, just delete the old key (don't upload).
+            if self._is_allowed_for_session_filter(new_key):
+                data = Path(event.dest_path).read_bytes()
+                self.state.backend.put_bytes(new_key, data)
+            self.state.backend.delete_key(old_key)
             print(f"[sync] moved → {new_key}", flush=True)
             self._schedule_state_write()
         except Exception as e:
@@ -231,35 +355,54 @@ class MirrorHandler(FileSystemEventHandler):
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: daemon.py <source-dir>", file=sys.stderr)
-        print("  Target is configured via env vars (see file docstring).", file=sys.stderr)
+    print("[sync] main() entered", flush=True)
+    if len(sys.argv) < 2:
+        print("Usage: daemon.py <workspace-dir> [extra-source-dir ...]", file=sys.stderr)
         return 2
 
-    source = Path(sys.argv[1]).expanduser().resolve()
-    if not source.exists() or not source.is_dir():
-        print(f"Source must be an existing directory: {source}", file=sys.stderr)
-        return 1
+    sources = [Path(arg).expanduser().resolve() for arg in sys.argv[1:]]
+    # Create source dirs if missing — Claude Code's project dir may not exist
+    # until the first session runs. Watchdog can't watch a nonexistent dir.
+    for src in sources:
+        src.mkdir(parents=True, exist_ok=True)
+        if not src.is_dir():
+            print(f"Source must be a directory: {src}", file=sys.stderr)
+            return 1
+
+    workspace = sources[0]
+    print(f"[sync] resolving backend (this may briefly hit the network)...", flush=True)
 
     try:
         backend = make_backend_from_env()
-    except ValueError as e:
+    except (ValueError, FileNotFoundError) as e:
         print(f"Backend configuration error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Backend setup failed: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
 
     print("[sync] daemon starting", flush=True)
-    print(f"[sync] source:  {source}", flush=True)
-    print(f"[sync] backend: {backend!r}", flush=True)
+    print(f"[sync] workspace: {workspace}", flush=True)
+    for src in sources[1:]:
+        print(f"[sync] extra src: {src}", flush=True)
+    print(f"[sync] backend:   {backend!r}", flush=True)
 
-    if is_share_mode_active(source):
-        n = initial_sync(source, backend)
-        print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
+    state = DaemonState(workspace, sources, backend)
+
+    if state.is_active:
+        n = initial_sync_all(sources, backend, state.shared_session_ids)
+        print(
+            f"[sync] initial sync complete: {n} files uploaded "
+            f"({len(state.shared_session_ids)} session(s) /share'd)",
+            flush=True,
+        )
     else:
         print("[sync] share-mode INACTIVE — daemon idle until /share is run", flush=True)
 
-    handler = MirrorHandler(source, backend)
     observer = Observer()
-    observer.schedule(handler, str(source), recursive=True)
+    for i, src in enumerate(sources):
+        handler = MirrorHandler(src, state, is_workspace=(i == 0))
+        observer.schedule(handler, str(src), recursive=True)
     observer.start()
 
     shutdown = threading.Event()

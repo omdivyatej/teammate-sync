@@ -1,13 +1,13 @@
 """
 Storage backend abstraction for teammate-sync.
 
-Two implementations:
-- LocalBackend  — writes to a local filesystem directory (Phase 2)
-- S3Backend     — writes to an S3 bucket (Phase 3a, hosted)
+Three implementations:
+- LocalBackend  — writes to a local filesystem directory (dev / tests)
+- S3Backend     — direct-to-S3 (legacy from Phase 3a, kept for hosted-self-deploy)
+- HTTPBackend   — calls the teammate-sync cloud backend (Phase 5+, the default)
 
-Selected via env var TEAMMATE_BACKEND (local|s3). The daemon and MCP server
-both construct the backend the same way from env, so they always agree on
-where the corpus lives.
+Selected via env var TEAMMATE_BACKEND (local|s3|cloud). The daemon and MCP
+server both construct the backend the same way, so they always agree.
 
 The interface is intentionally minimal — just key/value bytes — so adding
 a new backend later (R2, GCS, etc.) is a small isolated change.
@@ -165,9 +165,126 @@ class S3Backend(StorageBackend):
         return f"S3Backend(bucket={self.bucket}, prefix={self.prefix!r}, region={self._region})"
 
 
+class HTTPBackend(StorageBackend):
+    """
+    Storage backend that talks to the teammate-sync cloud backend over HTTP.
+
+    DAEMON use: teammate=<my own github handle>, since daemon writes its own
+        files. The backend authoritatively binds the owner to the auth token,
+        so wrong values get rejected — but we still need it right for the
+        list/delete paths which take teammate as a parameter.
+
+    MCP use: teammate=<the queried engineer>. Reads scoped to that teammate.
+        Writes would 403 (owner mismatch) — which is correct, MCP never writes.
+
+    All requests authenticated with a GitHub OAuth access token via Bearer.
+    """
+
+    def __init__(self, backend_url: str, token: str, org: str, teammate: str):
+        import httpx  # lazy
+
+        self.backend_url = backend_url.rstrip("/")
+        self.org = org
+        self.teammate = teammate
+        self._token = token
+        self._client = httpx.Client(
+            base_url=self.backend_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30.0,
+        )
+
+    def _basename(self, key: str) -> str:
+        return Path(key).name
+
+    def list_keys(self) -> list[str]:
+        r = self._client.get(
+            "/v1/files",
+            params={"org": self.org, "teammate": self.teammate},
+        )
+        r.raise_for_status()
+        keys = [f["path"] for f in r.json().get("files", [])]
+        # Filter control + skip-suffix files client-side (same semantics as
+        # LocalBackend and S3Backend).
+        return [
+            k for k in keys
+            if self._basename(k) not in CONTROL_FILES
+            and not self._basename(k).endswith(SKIP_SUFFIXES)
+        ]
+
+    def get_bytes(self, key: str) -> bytes | None:
+        r = self._client.get(
+            "/v1/files/get",
+            params={"org": self.org, "teammate": self.teammate, "path": key},
+        )
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.content
+
+    def put_bytes(self, key: str, data: bytes) -> None:
+        import base64
+
+        r = self._client.post(
+            "/v1/files",
+            json={
+                "org": self.org,
+                "path": key,
+                "content_b64": base64.b64encode(data).decode("ascii"),
+            },
+        )
+        r.raise_for_status()
+
+    def delete_key(self, key: str) -> None:
+        r = self._client.delete(
+            "/v1/files",
+            params={"org": self.org, "path": key},
+        )
+        if r.status_code != 404:
+            r.raise_for_status()
+
+    def get_state(self) -> dict | None:
+        r = self._client.get(
+            "/v1/state",
+            params={"org": self.org, "teammate": self.teammate},
+        )
+        r.raise_for_status()
+        data = r.json()
+        epoch = data.get("last_sync_epoch")
+        if not isinstance(epoch, (int, float)):
+            return None
+        return {"last_sync_epoch": epoch, "last_sync_iso": ""}
+
+    def put_state(self) -> None:
+        r = self._client.post("/v1/state", params={"org": self.org})
+        r.raise_for_status()
+
+    def purge_owner(self) -> int:
+        """
+        Single-call optimization: delete every file the caller owns in this
+        workspace. Used by the daemon's cleanup when share-mode flips off.
+        """
+        r = self._client.delete("/v1/files/purge", params={"org": self.org})
+        r.raise_for_status()
+        return r.json().get("deleted", 0)
+
+    def __repr__(self) -> str:
+        return f"HTTPBackend(url={self.backend_url}, org={self.org}, teammate={self.teammate})"
+
+
 def make_backend_from_env() -> StorageBackend:
-    """Construct the backend based on env vars. Shared by daemon and MCP."""
-    backend = os.environ.get("TEAMMATE_BACKEND", "local").lower()
+    """
+    Construct the WRITER backend based on env vars. Used by the daemon to
+    decide where its own teammate's content goes.
+
+    Backend selection via TEAMMATE_BACKEND:
+      - "cloud" (DEFAULT): talks to teammate-sync cloud backend. Reads auth
+        from ~/.teammate-sync/auth.json (see auth.py).
+      - "s3": legacy direct-to-S3 (set TEAMMATE_S3_BUCKET + TEAMMATE_HANDLE).
+      - "local": local filesystem (set TEAMMATE_CORPUS_DIR).
+    """
+    import httpx  # lazy
+
+    backend = os.environ.get("TEAMMATE_BACKEND", "cloud").lower()
 
     if backend == "local":
         target = os.environ.get("TEAMMATE_CORPUS_DIR", "./example_data")
@@ -177,8 +294,82 @@ def make_backend_from_env() -> StorageBackend:
         bucket = os.environ.get("TEAMMATE_S3_BUCKET")
         if not bucket:
             raise ValueError("TEAMMATE_S3_BUCKET must be set when TEAMMATE_BACKEND=s3")
-        prefix = os.environ.get("TEAMMATE_S3_PREFIX", "")
+        handle = os.environ.get("TEAMMATE_HANDLE")
+        explicit_prefix = os.environ.get("TEAMMATE_S3_PREFIX")
+        if handle:
+            prefix = handle.strip("/") + "/"
+        elif explicit_prefix is not None:
+            prefix = explicit_prefix
+        else:
+            raise ValueError(
+                "Either TEAMMATE_HANDLE (preferred) or TEAMMATE_S3_PREFIX "
+                "must be set when TEAMMATE_BACKEND=s3"
+            )
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         return S3Backend(bucket=bucket, prefix=prefix, region=region)
 
-    raise ValueError(f"Unknown TEAMMATE_BACKEND: {backend!r}. Use 'local' or 's3'.")
+    if backend == "cloud":
+        from auth import read_auth
+
+        auth = read_auth()  # raises with a clear message if missing
+        # Resolve our own GitHub handle so the daemon's list/delete calls
+        # target our own corpus (writes are owner-bound by the backend anyway).
+        r = httpx.get(
+            f"{auth['backend_url'].rstrip('/')}/v1/me",
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=10.0,
+        )
+        if r.status_code != 200:
+            raise ValueError(
+                f"Cloud backend rejected token (/v1/me → {r.status_code}). "
+                f"Re-run `teammate-sync init` to refresh."
+            )
+        self_handle = r.json()["github_handle"]
+        return HTTPBackend(
+            backend_url=auth["backend_url"],
+            token=auth["token"],
+            org=auth["org"],
+            teammate=self_handle,
+        )
+
+    raise ValueError(f"Unknown TEAMMATE_BACKEND: {backend!r}. Use 'cloud', 's3', or 'local'.")
+
+
+def make_s3_backend_for(handle: str) -> S3Backend:
+    """
+    Construct a READER backend for a specific teammate handle. Used by the
+    MCP server to query any teammate by parameter.
+
+    Reads bucket + region from env (TEAMMATE_S3_BUCKET, AWS_REGION) and
+    composes the prefix from the handle.
+    """
+    bucket = os.environ.get("TEAMMATE_S3_BUCKET")
+    if not bucket:
+        raise ValueError("TEAMMATE_S3_BUCKET must be set")
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    prefix = handle.strip("/") + "/"
+    return S3Backend(bucket=bucket, prefix=prefix, region=region)
+
+
+def list_s3_teammates() -> list[str]:
+    """
+    Discover available teammates by listing top-level "directories" in the
+    configured S3 bucket. Used by the MCP server's list_teammates tool.
+    Returns handles without trailing slash.
+    """
+    import boto3
+
+    bucket = os.environ.get("TEAMMATE_S3_BUCKET")
+    if not bucket:
+        raise ValueError("TEAMMATE_S3_BUCKET must be set")
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    s3 = boto3.client("s3", region_name=region)
+
+    handles: list[str] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Delimiter="/"):
+        for entry in page.get("CommonPrefixes", []) or []:
+            p = entry.get("Prefix", "").rstrip("/")
+            if p:
+                handles.append(p)
+    return sorted(handles)
