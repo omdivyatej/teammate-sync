@@ -34,7 +34,76 @@ from auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
 CALLBACK_TIMEOUT_SECONDS = 180
 
 
+def _install_hooks_into_claude_settings(project_dir: Path, workspace_dir: Path) -> Path:
+    """
+    Merge SessionStart / PostToolUse / SessionEnd hooks into ~/.claude/settings.json,
+    preserving any other settings already there.
+    """
+    py_bin = project_dir / ".venv" / "bin" / "python"
+    hook_script = project_dir / "hook.py"
+    active_file = workspace_dir / ".active-sessions.json"
+
+    settings_path = Path("~/.claude/settings.json").expanduser()
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except json.JSONDecodeError:
+            settings = {}
+    else:
+        settings = {}
+
+    hooks = settings.setdefault("hooks", {})
+    for event, op in [("SessionStart", "start"),
+                      ("PostToolUse", "heartbeat"),
+                      ("SessionEnd", "end")]:
+        cmd = (
+            f"TEAMMATE_ACTIVE_SESSIONS_FILE={active_file} "
+            f"{py_bin} {hook_script} {op}"
+        )
+        hooks[event] = [{"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}]
+
+    settings_path.write_text(json.dumps(settings, indent=2))
+    return settings_path
+
+
+def _register_mcp(project_dir: Path, anthropic_key: str) -> bool:
+    """Register the MCP server via `claude mcp add`. Returns True on success."""
+    import subprocess as _sp
+
+    py_bin = project_dir / ".venv" / "bin" / "python"
+    server = project_dir / "server.py"
+
+    # remove any existing registration first (idempotent)
+    _sp.run(
+        ["claude", "mcp", "remove", "teammate-sync", "--scope", "user"],
+        capture_output=True,
+    )
+
+    result = _sp.run(
+        [
+            "claude", "mcp", "add",
+            "-e", f"ANTHROPIC_API_KEY={anthropic_key}",
+            "--scope", "user",
+            "teammate-sync",
+            "--",
+            str(py_bin), str(server),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"  ⚠️  claude mcp add failed: {result.stderr.strip()}")
+        return False
+    return True
+
+
 def cmd_init(args) -> int:
+    import json as _json
+    import os as _os
+
+    project_dir = Path(__file__).resolve().parent
     backend_url = args.backend_url.rstrip("/")
     captured: dict[str, str | None] = {"token": None}
 
@@ -140,13 +209,79 @@ def cmd_init(args) -> int:
 
     path = write_auth(token=token, org=org, backend_url=backend_url)
     print(f"\n✓ Saved {path} (mode 0600)")
+    print(f"  GitHub:    {me['github_handle']}")
     print(f"  Workspace: {org}")
     print(f"  Backend:   {backend_url}")
-    print()
-    print("Next steps:")
-    print("  1. Start the daemon:           ./start-daemon.sh")
-    print("  2. In a Claude Code session:   /share")
-    print("  3. Teammates can now query you via their MCP.")
+
+    # --- Workspace dir -------------------------------------------------------
+    default_ws = Path("~/teammate-workspace/.claude").expanduser()
+    print(
+        f"\nPick a workspace directory — this is where your CLAUDE.md and notes\n"
+        f"will live. Files in this directory get mirrored to the team's cloud\n"
+        f"store when you /share a session.\n"
+    )
+    try:
+        ws_input = input(f"Workspace dir [{default_ws}]: ").strip()
+    except EOFError:
+        ws_input = ""
+    workspace_dir = Path(ws_input or str(default_ws)).expanduser().resolve()
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    claude_md = workspace_dir / "CLAUDE.md"
+    if not claude_md.exists():
+        import socket
+        host = socket.gethostname().split(".")[0]
+        claude_md.write_text(
+            f"# Workspace on {host}\n\n"
+            f"Notes and decisions live here. Anything in this directory gets\n"
+            f"mirrored to the team's cloud store when you /share a session.\n\n"
+            f"## Currently working on\n\n"
+            f"(your notes go here)\n"
+        )
+        print(f"  Wrote starter CLAUDE.md at {claude_md}")
+
+    # --- Slash commands ------------------------------------------------------
+    print("\nInstalling /share /unshare /shared slash commands...")
+    commands_dir = Path("~/.claude/commands").expanduser()
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    files = {
+        "share.md":   _slash_command_md("share",   project_dir, workspace_dir),
+        "unshare.md": _slash_command_md("unshare", project_dir, workspace_dir),
+        "shared.md":  _slash_command_md("list",    project_dir, workspace_dir),
+    }
+    for name, content in files.items():
+        (commands_dir / name).write_text(content)
+    print(f"  Wrote {commands_dir}/{{share,unshare,shared}}.md")
+
+    # --- Hooks ---------------------------------------------------------------
+    print("\nRegistering Claude Code hooks (SessionStart, PostToolUse, SessionEnd)...")
+    settings_path = _install_hooks_into_claude_settings(project_dir, workspace_dir)
+    print(f"  Merged into {settings_path}")
+
+    # --- MCP server ----------------------------------------------------------
+    anthropic_key = _os.environ.get("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        print(
+            "\n⚠️  ANTHROPIC_API_KEY not set in your shell. Skipping MCP registration.\n"
+            "    Set it and register manually:\n"
+            f"    claude mcp add -e ANTHROPIC_API_KEY=... --scope user teammate-sync \\\n"
+            f"      -- {project_dir / '.venv' / 'bin' / 'python'} {project_dir / 'server.py'}"
+        )
+    else:
+        print("\nRegistering MCP server with Claude Code (user scope)...")
+        if _register_mcp(project_dir, anthropic_key):
+            print("  ✓ teammate-sync registered")
+
+    # --- Done ----------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("✓ Setup complete.")
+    print("=" * 60)
+    print(f"\n  Workspace: {workspace_dir}")
+    print(f"  Daemon:    ./start-daemon.sh {workspace_dir}")
+    print(f"\nThree more things you do once:")
+    print(f"  1. Start the daemon (command above), in a terminal you leave open.")
+    print(f"  2. Restart any open Claude Code sessions so they pick up the hooks + MCP.")
+    print(f"  3. In a fresh Claude Code session, type /share.")
     return 0
 
 
