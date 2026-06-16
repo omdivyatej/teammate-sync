@@ -12,10 +12,8 @@ any directory, and your context becomes queryable by your teammates.
 ## 1. Install (~15s)
 
 ```
-pip install git+https://github.com/omdivyatej/teammate-sync.git
+pip install teammate-sync
 ```
-
-(Once we publish to PyPI this collapses to `pip install teammate-sync`.)
 
 This puts a single `teammate-sync` binary on your PATH. Every other piece
 of the system — hooks, MCP server, slash commands, daemon — dispatches
