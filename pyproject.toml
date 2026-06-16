@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://omdivyatej.github.io/teammate-sync-site/"
+Homepage = "https://omdivyatej.github.io/teammate-sync/"
 Source = "https://github.com/omdivyatej/teammate-sync"
 
 [project.scripts]

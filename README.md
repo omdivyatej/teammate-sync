@@ -6,7 +6,7 @@ theirs anything and gets back a cited answer in seconds.
 
 No pasted transcripts. No GitHub pushes. No shared bucket setup.
 
-- Landing: https://omdivyatej.github.io/teammate-sync-site/
+- Landing: https://omdivyatej.github.io/teammate-sync/
 - Source: https://github.com/omdivyatej/teammate-sync
 
 ---
