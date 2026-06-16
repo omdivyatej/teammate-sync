@@ -6,19 +6,26 @@ any directory, and your context becomes queryable by your teammates.
 ## Prereqs
 
 - Python 3.11+ (`python3.11 --version`)
+- `pipx` (`brew install pipx && pipx ensurepath` — one-time, isolates the
+  install in its own venv and puts the binary on your PATH)
 - `claude` (Claude Code CLI)
 - `ANTHROPIC_API_KEY` exported in your shell
 
 ## 1. Install (~15s)
 
 ```
-pip install teammate-sync
+pipx install teammate-sync
 ```
 
 This puts a single `teammate-sync` binary on your PATH. Every other piece
 of the system — hooks, MCP server, slash commands, daemon — dispatches
 through it. No checkout, no virtualenv to keep around, no absolute paths
 baked into anything.
+
+(Why pipx and not pip: pipx creates a dedicated venv per CLI tool and
+symlinks the binary into `~/.local/bin/`. Plain `pip install` either
+fails on modern macOS Python with PEP 668, or installs into a venv where
+the binary only exists while that venv is active.)
 
 ## 2. Sign in + register (~1 min, interactive)
 
@@ -116,7 +123,7 @@ rm -f ~/.claude/commands/share.md ~/.claude/commands/unshare.md ~/.claude/comman
 # Edit ~/.claude/settings.json — remove the "hooks" block
 # Kill the daemon (Ctrl-C in its terminal)
 rm -rf ~/.teammate-sync
-pip uninstall teammate-sync
+pipx uninstall teammate-sync
 ```
 
 ## CLI reference

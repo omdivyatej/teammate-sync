@@ -31,12 +31,17 @@ context window stays clean.
 ## Install
 
 ```
-pip install teammate-sync
+pipx install teammate-sync
 teammate-sync init
 teammate-sync daemon
 ```
 
 That's it. Full setup walkthrough: [INSTALL.md](INSTALL.md).
+
+(Don't have pipx? `brew install pipx && pipx ensurepath`, one-time. We
+recommend pipx over plain pip because it isolates the install in its own
+venv and puts the binary on your PATH — plain `pip install` fails on
+modern macOS Python with PEP 668.)
 
 `init` opens GitHub OAuth (your workspace = your GitHub org, no separate
 account), installs the `/share` slash commands into `~/.claude/commands/`,
