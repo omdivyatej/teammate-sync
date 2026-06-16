@@ -341,9 +341,14 @@
       One command per session.
     </p>
     <div class="cta">
-      <a href="#access" class="btn btn-primary">Request beta access</a>
+      <a href="#install" class="btn btn-primary">Install now</a>
+      <a href="#access" class="btn btn-secondary">Request beta access</a>
       <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">View on GitHub</a>
     </div>
+    <p style="margin-top: 0.6rem; font-size: 0.9rem; color: var(--text-muted);">
+      Live on PyPI:
+      <a href="https://pypi.org/project/teammate-sync/" style="color: var(--text-muted);"><code>pipx install teammate-sync</code></a>
+    </p>
   </section>
 
   <!-- PROBLEM -->
@@ -506,6 +511,53 @@
       work that survives review. teammate-sync captures the live reasoning
       that produced it — including the parts your teammate is figuring out
       right now, this second.
+    </p>
+  </section>
+
+  <!-- INSTALL -->
+  <section id="install">
+    <h2>Install</h2>
+    <p>
+      One PyPI package, one binary, three commands. Works on any machine
+      where Claude Code already runs.
+    </p>
+
+    <div class="terminal">
+      <div class="title-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">your terminal</span>
+      </div>
+<pre>
+<span class="cmt"># Prereq: pipx (one-time, if you don't already have it)</span>
+<span class="prompt">❯</span> brew install pipx <span class="cmt">&&</span> pipx ensurepath
+
+<span class="cmt"># 1. Install the binary (~15s)</span>
+<span class="prompt">❯</span> pipx install teammate-sync
+
+<span class="cmt"># 2. Sign in with GitHub, wire up hooks / MCP / slash commands (~1 min)</span>
+<span class="prompt">❯</span> teammate-sync init
+
+<span class="cmt"># 3. Start the sync daemon — leave this terminal open</span>
+<span class="prompt">❯</span> teammate-sync daemon
+<span class="good">[sync] daemon starting</span>
+<span class="good">[sync] share-mode INACTIVE — daemon idle until /share is run</span>
+</pre>
+    </div>
+
+    <p style="margin-top: 1.5rem; font-size: 0.95rem; color: var(--text-muted);">
+      That's it. Restart any open Claude Code sessions so they pick up the
+      new hooks + MCP, then type <code>/share</code> in any session to
+      start sharing it. Full walkthrough:
+      <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md">INSTALL.md</a>.
+    </p>
+
+    <p style="font-size: 0.9rem; color: var(--text-muted);">
+      Requires Python 3.11+, Claude Code CLI, and an
+      <code>ANTHROPIC_API_KEY</code> in your shell. Works on macOS and
+      Linux. Why pipx instead of pip:
+      <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md#1-install-15s">PEP 668</a>
+      blocks plain pip on modern Python; pipx gives the binary its own
+      isolated venv automatically.
     </p>
   </section>
 
