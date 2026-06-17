@@ -116,10 +116,56 @@ def cmd_share() -> int:
     return 0
 
 
-def cmd_unshare() -> int:
-    sid = require_session_id()
-    if not sid:
-        return 1
+def cmd_unshare(target: str | None = None) -> int:
+    """
+    Unshare a session.
+
+    target:
+      - None        -> unshare the current Claude Code session
+                       (read from CLAUDE_CODE_SESSION_ID)
+      - "--all"     -> unshare every session in the registry
+      - "<sid>"     -> unshare that specific session_id (full or unambiguous prefix)
+    """
+    if target == "--all":
+        if not TARGET_FILE.exists():
+            print("Nothing is currently shared.")
+            return 0
+        def mod_all(state: dict) -> dict:
+            state["sessions"] = []
+            return state
+        update_registry(mod_all)
+        print("✓ All shared sessions removed. The daemon will purge the")
+        print("  team's shared store on its next event.")
+        return 0
+
+    if target:
+        # Resolve target — accept full UUID or unambiguous prefix.
+        if not TARGET_FILE.exists():
+            print(f"Nothing is currently shared, so nothing to unshare.")
+            return 0
+        try:
+            state = json.loads(TARGET_FILE.read_text())
+        except json.JSONDecodeError:
+            state = {"sessions": []}
+        candidates = [
+            s for s in state.get("sessions", [])
+            if isinstance(s, dict) and s.get("session_id", "").startswith(target)
+        ]
+        if not candidates:
+            print(f"No shared session matches '{target}'.")
+            print(f"Run /shared to see what's shared and pick a full session ID.")
+            return 1
+        if len(candidates) > 1:
+            print(f"'{target}' is ambiguous — matches {len(candidates)} sessions:")
+            for c in candidates:
+                print(f"  - {c['session_id']}")
+            print(f"Use the full session ID.")
+            return 1
+        sid = candidates[0]["session_id"]
+    else:
+        sid = require_session_id()
+        if not sid:
+            return 1
 
     def mod(state: dict) -> dict:
         sessions = state.get("sessions", [])
@@ -184,12 +230,19 @@ def cmd_list() -> int:
 
     cur = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     print(f"Currently shared sessions ({len(sessions)}):")
+    print()
     for s in sessions:
         if not isinstance(s, dict):
             continue
         sid = s.get("session_id", "?")
         marker = "  ← this session" if sid == cur else ""
-        print(f"  - {sid[:8]}  (shared {s.get('shared_at', '?')}){marker}")
+        print(f"  {sid}{marker}")
+        print(f"    shared: {s.get('shared_at', '?')}")
+        if s.get('cwd'):
+            print(f"    cwd:    {s['cwd']}")
+        print()
+    print("To unshare a specific session: /unshare <session-id>")
+    print("To unshare ALL sessions:       /unshare --all")
     return 0
 
 

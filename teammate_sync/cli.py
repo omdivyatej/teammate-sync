@@ -341,14 +341,37 @@ def cmd_teammates(args) -> int:
 
 def _slash_command_md(action: str, binary: str) -> str:
     """
-    Generate a slash-command markdown file. Now calls the installed
-    `teammate-sync` binary (or whatever path resolves it), so the same
-    markdown works regardless of where the package is installed.
+    Generate a slash-command markdown file. Calls the installed
+    `teammate-sync` binary so the same markdown works regardless of
+    where the package is installed.
+
+    /unshare accepts an optional argument via $ARGUMENTS — empty for
+    "this session", a session-id for a specific one, or --all to nuke
+    everything.
     """
+    if action == "unshare":
+        return f"""---
+description: Unshare a Claude Code session. No args unshares THIS session; pass a session-id to unshare that specific one; pass --all to unshare everything.
+argument-hint: "[session-id | --all]"
+allowed-tools: Bash({binary}:*)
+---
+
+Execute this command via the Bash tool and show its full stdout
+output to the user verbatim:
+
+```
+{binary} unshare $ARGUMENTS
+```
+
+The CLAUDE_CODE_SESSION_ID env var is set by Claude Code in the Bash
+subprocess; the script falls back to it when no argument is given.
+
+After showing the output, do NOT add commentary.
+"""
+
     descriptions = {
-        "share":   "Mark this Claude Code session as shareable with teammates via teammate-sync",
-        "unshare": "Remove this Claude Code session from teammate-sync sharing",
-        "shared":  "List which Claude Code sessions are currently shared with teammates via teammate-sync",
+        "share":  "Mark this Claude Code session as shareable with teammates via teammate-sync",
+        "shared": "List which Claude Code sessions are currently shared with teammates via teammate-sync",
     }
     return f"""---
 description: {descriptions[action]}
@@ -415,7 +438,9 @@ def cmd_share(args) -> int:
 
 def cmd_unshare(args) -> int:
     from . import share_cli
-    return share_cli.cmd_unshare()
+    if args.all:
+        return share_cli.cmd_unshare(target="--all")
+    return share_cli.cmd_unshare(args.target)
 
 
 def cmd_shared(args) -> int:
@@ -482,7 +507,16 @@ def main() -> int:
 
     # Direct-invoke commands (also reachable via the /share, /unshare, /shared slash commands)
     sub.add_parser("share",   help="Mark the current Claude Code session as shareable.").set_defaults(func=cmd_share)
-    sub.add_parser("unshare", help="Remove the current Claude Code session from sharing.").set_defaults(func=cmd_unshare)
+    p_unshare = sub.add_parser(
+        "unshare",
+        help="Unshare a session. No args = this session. "
+             "<session-id> = that specific one. --all = nuke everything.",
+    )
+    p_unshare.add_argument("target", nargs="?", default=None,
+                           help="Session ID (full or unambiguous prefix)")
+    p_unshare.add_argument("--all", action="store_true",
+                           help="Unshare every session in the registry.")
+    p_unshare.set_defaults(func=cmd_unshare)
     sub.add_parser("shared",  help="List currently shared sessions.").set_defaults(func=cmd_shared)
 
     p_daemon = sub.add_parser(
