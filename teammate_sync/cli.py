@@ -65,8 +65,12 @@ def _install_hooks_into_claude_settings(binary: str) -> Path:
     return settings_path
 
 
-def _register_mcp(binary: str, anthropic_key: str) -> bool:
-    """Register the MCP server via `claude mcp add`. Returns True on success."""
+def _register_mcp(binary: str) -> bool:
+    """Register the MCP server via `claude mcp add`. Returns True on success.
+
+    The server self-loads the Anthropic key from ~/.teammate-sync/auth.json
+    at launch — no env var is passed at registration time, so the user
+    never has to manage ANTHROPIC_API_KEY in their shell."""
     import subprocess as _sp
 
     # remove any existing registration first (idempotent)
@@ -78,7 +82,6 @@ def _register_mcp(binary: str, anthropic_key: str) -> bool:
     result = _sp.run(
         [
             "claude", "mcp", "add",
-            "-e", f"ANTHROPIC_API_KEY={anthropic_key}",
             "--scope", "user",
             "teammate-sync",
             "--",
@@ -93,9 +96,42 @@ def _register_mcp(binary: str, anthropic_key: str) -> bool:
     return True
 
 
-def cmd_init(args) -> int:
-    import os as _os
+def _prompt_for_anthropic_key(existing: str | None) -> str | None:
+    """
+    Interactively prompt for the Anthropic API key.
 
+    If `existing` is non-empty, offer to keep it (default) or replace.
+    Returns the key to store (existing or new), or None if the user declined
+    to provide one.
+    """
+    if existing:
+        print(f"\nAnthropic API key is already stored "
+              f"(starts with {existing[:12]}...).")
+        choice = input("  Keep it [k] / replace [r] / skip [s]? ").strip().lower() or "k"
+        if choice == "k":
+            return existing
+        if choice == "s":
+            return existing  # keep the existing rather than clearing
+
+    print()
+    print("Anthropic API key — used by teammate-sync's MCP server to synthesize")
+    print("cited answers when teammates query you. Get one (or reuse an existing")
+    print("one) at https://console.anthropic.com/settings/keys.")
+    print()
+    while True:
+        key = input("  Paste your Anthropic API key (or press Enter to skip): ").strip()
+        if not key:
+            print("  Skipped. The MCP server won't work until you set one.")
+            print("  Re-run `teammate-sync init` to add it later.")
+            return None
+        if not key.startswith("sk-ant-"):
+            print("  That doesn't look like an Anthropic key (should start with 'sk-ant-').")
+            print("  Try again or press Enter to skip.")
+            continue
+        return key
+
+
+def cmd_init(args) -> int:
     binary = _resolve_self_binary()
     backend_url = args.backend_url.rstrip("/")
     captured: dict[str, str | None] = {"token": None}
@@ -200,11 +236,24 @@ def cmd_init(args) -> int:
             break
         print("Invalid choice, try again.")
 
-    path = write_auth(token=token, org=org, backend_url=backend_url)
+    # --- Anthropic key (interactive) -----------------------------------------
+    # Preserve any existing key in auth.json on re-run.
+    existing_key = None
+    try:
+        existing_key = json.loads(auth_file_path().read_text()).get("anthropic_key")
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    anthropic_key = _prompt_for_anthropic_key(existing_key)
+
+    path = write_auth(
+        token=token, org=org, backend_url=backend_url,
+        anthropic_key=anthropic_key,
+    )
     print(f"\n✓ Saved {path} (mode 0600)")
     print(f"  GitHub:    {me['github_handle']}")
     print(f"  Workspace: {org}")
     print(f"  Backend:   {backend_url}")
+    print(f"  Anthropic: {'set' if anthropic_key else 'NOT SET (MCP server will fail)'}")
 
     # --- Slash commands ------------------------------------------------------
     print("\nInstalling /share /unshare /shared slash commands...")
@@ -225,18 +274,12 @@ def cmd_init(args) -> int:
     print(f"  Merged into {settings_path}")
 
     # --- MCP server ----------------------------------------------------------
-    anthropic_key = _os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
-        print(
-            "\n⚠️  ANTHROPIC_API_KEY not set in your shell. Skipping MCP registration.\n"
-            "    Set it and register manually:\n"
-            f"    claude mcp add -e ANTHROPIC_API_KEY=... --scope user teammate-sync \\\n"
-            f"      -- {binary} mcp-server"
-        )
-    else:
-        print("\nRegistering MCP server with Claude Code (user scope)...")
-        if _register_mcp(binary, anthropic_key):
-            print("  ✓ teammate-sync registered")
+    # No env var required — the server self-loads its Anthropic key from
+    # auth.json at launch. Always register; if the key is missing, the user
+    # gets a clear runtime error from the server pointing them back to init.
+    print("\nRegistering MCP server with Claude Code (user scope)...")
+    if _register_mcp(binary):
+        print("  ✓ teammate-sync registered")
 
     # --- Done ----------------------------------------------------------------
     print("\n" + "=" * 60)
@@ -396,7 +439,12 @@ def cmd_hook(args) -> int:
 
 def cmd_mcp_server(args) -> int:
     """Launch the MCP server on stdio (invoked by Claude Code, not by users)."""
-    from . import server as _server
+    try:
+        from . import server as _server
+    except ValueError as e:
+        # E.g. missing Anthropic key — surface as one clean line, not a traceback.
+        print(f"[teammate-sync mcp-server] {e}", file=sys.stderr)
+        return 1
     _server.mcp.run()
     return 0
 

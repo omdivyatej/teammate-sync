@@ -19,7 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 import httpx
 
-from .auth import read_auth
+from .auth import read_anthropic_key, read_auth
 from .backend import ACTIVE_SESSIONS_FILENAME, HTTPBackend, StorageBackend
 
 
@@ -31,7 +31,10 @@ STALE_THRESHOLD_SECONDS = 30 * 60  # 30 minutes
 
 
 mcp = FastMCP("teammate-sync")
-anthropic_client = Anthropic()
+# Read the Anthropic key from ~/.teammate-sync/auth.json (written by
+# `teammate-sync init`). Failing fast here gives the user a clear remediation
+# message before any MCP tool call is attempted.
+anthropic_client = Anthropic(api_key=read_anthropic_key())
 print("[server] backend-mediated mode — auth from ~/.teammate-sync/auth.json", flush=True)
 
 
