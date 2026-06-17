@@ -110,8 +110,9 @@ def cmd_share() -> int:
     print(f"  cwd: {cwd}")
     print(f"  Total shared sessions: {n}")
     print()
-    print("  The daemon will sync this session's transcript to your team's")
-    print("  shared store. Use /unshare to revoke; /shared to audit.")
+    print("  Shared for the lifetime of this Claude Code session. When you")
+    print("  close it (or start a fresh one), the share auto-revokes and the")
+    print("  cloud copy is purged. Use /unshare to revoke sooner; /shared to audit.")
     return 0
 
 
@@ -137,6 +138,33 @@ def cmd_unshare() -> int:
     else:
         print(f"  {n} other session(s) still shared — workspace continues syncing.")
     return 0
+
+
+def remove_shared_session(session_id: str) -> bool:
+    """
+    Remove `session_id` from the shared registry. Returns True if removed,
+    False if it wasn't there (or the registry doesn't exist yet).
+
+    Called by the SessionEnd hook so share state never outlives the
+    Claude Code session it belonged to.
+    """
+    if not session_id or not TARGET_FILE.exists():
+        return False
+
+    removed = {"flag": False}
+
+    def mod(state: dict) -> dict:
+        sessions = state.get("sessions", [])
+        before = len(sessions)
+        state["sessions"] = [
+            s for s in sessions
+            if not (isinstance(s, dict) and s.get("session_id") == session_id)
+        ]
+        removed["flag"] = len(state["sessions"]) < before
+        return state
+
+    update_registry(mod)
+    return removed["flag"]
 
 
 def cmd_list() -> int:

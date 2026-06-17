@@ -144,6 +144,15 @@ def op_end(state: dict, payload: dict) -> dict:
     session_id = payload.get("session_id")
     sessions = _normalize_sessions(state)
     state["sessions"] = [s for s in sessions if s["session_id"] != session_id]
+    # Share state is per-session — when the session ends, drop it from the
+    # shared registry too. The daemon's watcher will then purge the cloud
+    # copy on its next event (same path as a manual /unshare).
+    try:
+        from . import share_cli
+        share_cli.remove_shared_session(session_id)
+    except Exception as e:
+        # Never let cleanup failure break the host session's shutdown.
+        print(f"[teammate-sync hook] share cleanup failed: {e}", file=sys.stderr)
     return state
 
 
