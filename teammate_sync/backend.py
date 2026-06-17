@@ -309,7 +309,7 @@ def make_backend_from_env() -> StorageBackend:
         return S3Backend(bucket=bucket, prefix=prefix, region=region)
 
     if backend == "cloud":
-        from auth import read_auth
+        from .auth import read_auth
 
         auth = read_auth()  # raises with a clear message if missing
         # Resolve our own GitHub handle so the daemon's list/delete calls
