@@ -307,8 +307,9 @@ def list_teammates() -> list[str]:
     """List all teammates in your workspace whose Claude Code context is queryable.
 
     Workspace = the GitHub organization configured in your auth file. Returns
-    the GitHub handles of all org members. They may not have shared anything
-    yet — try query_teammate_context to see.
+    the GitHub handles of all org members. To actually query someone, they
+    must have a connection accepted with you AND have /share'd a session
+    explicitly with you.
 
     Returns:
         Sorted list of GitHub handles. Empty list if you're the only member
@@ -326,6 +327,64 @@ def list_teammates() -> list[str]:
         return sorted(t["github_handle"] for t in r.json().get("teammates", []))
     except Exception as e:
         return [f"[Error: {e}]"]
+
+
+@mcp.tool()
+def dump_teammate_context(teammate: str, session_id: str | None = None) -> str:
+    """Return the RAW transcript / file content of a teammate's shared session.
+
+    Unlike query_teammate_context, this does NO Claude synthesis — it just
+    returns the literal bytes from a teammate's session jsonl (or the index
+    of session IDs visible to you, if session_id is omitted). Useful for:
+      - Debugging: "did the share actually flow through? what's in it?"
+      - Power users who want to read the raw conversation themselves.
+      - Avoiding cost/latency of a synthesis call.
+
+    Args:
+        teammate: The teammate's GitHub handle.
+        session_id: If provided, dumps that specific session's jsonl. If
+                    omitted, returns a list of session IDs visible to you
+                    along with their sizes.
+
+    Returns:
+        Raw session text, OR an index listing visible sessions.
+    """
+    try:
+        auth = read_auth()
+        backend = HTTPBackend(
+            backend_url=auth["backend_url"],
+            token=auth["token"],
+            org=auth["org"],
+            teammate=teammate,
+        )
+        if session_id is None:
+            result = backend.dump(teammate)
+            files = result.get("visible_files", [])
+            if not files:
+                return (
+                    f"No sessions from {teammate} are visible to you.\n"
+                    f"Either they haven't /share'd with you, or you haven't /accept'd "
+                    f"their connection request. Run /connections to check pending invites."
+                )
+            lines = [f"Files visible from {teammate} ({len(files)}):"]
+            for f in files:
+                lines.append(f"  {f['path']}  ({f['size']} bytes)")
+            lines.append("")
+            lines.append(
+                "Dump a specific session by calling dump_teammate_context "
+                f"with session_id=<one of the .jsonl basenames above>."
+            )
+            return "\n".join(lines)
+        # Specific session
+        raw = backend.dump(teammate, session_id)
+        if isinstance(raw, bytes):
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return raw.decode("utf-8", errors="replace")
+        return str(raw)
+    except Exception as e:
+        return f"[Error: {e}]"
 
 
 @mcp.tool()

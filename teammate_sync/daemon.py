@@ -68,26 +68,43 @@ def extract_session_id_from_path(rel_path: str) -> str | None:
     return candidate if _UUID_RE.match(candidate) else None
 
 
-def read_shared_session_ids(workspace: Path) -> set[str]:
+def read_shared_session_info(workspace: Path) -> dict[str, list[str]]:
     """
-    Returns the set of session_ids currently /share'd in this workspace.
-    Empty set if no .shared-sessions.json, or it's malformed, or has no sessions.
+    Returns {session_id: [recipient_handles]} for all currently /share'd
+    sessions in this workspace. Empty dict if no .shared-sessions.json, or
+    malformed, or no sessions. A session with an empty recipients list is
+    DROPPED — v0.2 requires explicit recipients, no "shared with nobody."
     """
     shared_file = workspace / SHARED_SESSIONS_FILENAME
     if not shared_file.exists():
-        return set()
+        return {}
     try:
         data = json.loads(shared_file.read_text())
     except (json.JSONDecodeError, OSError):
-        return set()
+        return {}
     sessions = data.get("sessions", [])
     if not isinstance(sessions, list):
-        return set()
-    return {
-        s["session_id"]
-        for s in sessions
-        if isinstance(s, dict) and isinstance(s.get("session_id"), str)
-    }
+        return {}
+    info: dict[str, list[str]] = {}
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        sid = s.get("session_id")
+        if not isinstance(sid, str):
+            continue
+        recipients = s.get("recipients") or []
+        if not isinstance(recipients, list):
+            continue
+        recipients = [r for r in recipients if isinstance(r, str) and r]
+        if not recipients:
+            continue  # v0.2: no recipients = not actually shared
+        info[sid] = recipients
+    return info
+
+
+def read_shared_session_ids(workspace: Path) -> set[str]:
+    """Backwards-compat thin wrapper — set of session_ids currently shared."""
+    return set(read_shared_session_info(workspace).keys())
 
 
 def is_share_mode_active(workspace: Path) -> bool:
@@ -98,15 +115,20 @@ def is_share_mode_active(workspace: Path) -> bool:
 def initial_sync_all(
     sources: list[Path],
     backend: StorageBackend,
-    shared_session_ids: set[str],
+    shared_session_info: dict[str, list[str]],
     workspace_index: int = 0,
 ) -> int:
     """
-    Mirror sources into backend. Source at workspace_index is the "workspace"
-    (CLAUDE.md, scratch notes, etc.) — every non-skipped file uploads. Other
-    sources are "sessions" — only files whose basename is <uuid>.jsonl AND
-    whose uuid is in shared_session_ids upload. Anything else is skipped
-    (privacy: unrelated Claude Code work never leaves the machine).
+    Mirror sources into backend with v0.2 directed-share semantics.
+
+    Source at workspace_index is the "workspace" (CLAUDE.md, scratch notes,
+    etc.) — every non-skipped file uploads, but with NO session_id /
+    recipients (these are non-session corpus files; backend ACL grants
+    them via "any session shared from owner to requester").
+
+    Other sources are "sessions" — only files whose basename is <uuid>.jsonl
+    AND whose uuid is in shared_session_info upload, and they upload WITH
+    session_id + recipients so the backend can register per-session ACL.
 
     Single deletion pass at the end prunes backend keys absent from the
     filtered source set.
@@ -128,13 +150,19 @@ def initial_sync_all(
 
             rel = str(src_file.relative_to(source))
 
+            sid: str | None = None
+            recipients: list[str] | None = None
             if not is_workspace:
                 sid = extract_session_id_from_path(rel)
-                if not sid or sid not in shared_session_ids:
+                if not sid or sid not in shared_session_info:
                     continue  # not a /share'd session — skip
+                recipients = shared_session_info[sid]
 
             all_source_keys.add(rel)
-            backend.put_bytes(rel, src_file.read_bytes())
+            backend.put_bytes(
+                rel, src_file.read_bytes(),
+                session_id=sid, recipients=recipients,
+            )
             written += 1
 
     for existing_key in backend.list_keys():
@@ -183,11 +211,19 @@ class DaemonState:
         self.sources = sources
         self.backend = backend
         self._lock = threading.Lock()
-        self.shared_session_ids: set[str] = read_shared_session_ids(workspace)
+        self.shared_session_info: dict[str, list[str]] = read_shared_session_info(workspace)
 
     @property
     def is_active(self) -> bool:
-        return bool(self.shared_session_ids)
+        return bool(self.shared_session_info)
+
+    @property
+    def shared_session_ids(self) -> set[str]:
+        return set(self.shared_session_info.keys())
+
+    def recipients_for(self, session_id: str) -> list[str] | None:
+        """Return the recipient list for a /share'd session, or None if not shared."""
+        return self.shared_session_info.get(session_id)
 
     def reconcile_shared_sessions(self) -> None:
         """
@@ -200,8 +236,10 @@ class DaemonState:
             backend in the deletion pass)
         """
         with self._lock:
-            new_set = read_shared_session_ids(self.workspace)
-            old_set = self.shared_session_ids
+            new_info = read_shared_session_info(self.workspace)
+            old_info = self.shared_session_info
+            new_set = set(new_info.keys())
+            old_set = set(old_info.keys())
 
             if not old_set and new_set:
                 print(
@@ -209,23 +247,25 @@ class DaemonState:
                     f"uploading workspace + shared sessions",
                     flush=True,
                 )
-                self.shared_session_ids = new_set
-                n = initial_sync_all(self.sources, self.backend, new_set)
+                self.shared_session_info = new_info
+                n = initial_sync_all(self.sources, self.backend, new_info)
                 print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
             elif old_set and not new_set:
                 print("[sync] share-mode DEACTIVATED → cleaning backend", flush=True)
                 n = cleanup_backend(self.backend)
-                self.shared_session_ids = new_set  # empty
+                self.shared_session_info = new_info  # empty
                 print(f"[sync] backend cleaned: {n} objects removed", flush=True)
-            elif old_set != new_set:
+            elif old_info != new_info:
                 added = new_set - old_set
                 removed = old_set - new_set
+                changed = {sid for sid in new_set & old_set if new_info[sid] != old_info[sid]}
                 print(
-                    f"[sync] shared set changed (+{len(added)} -{len(removed)}) → reconciling",
+                    f"[sync] shared set changed (+{len(added)} -{len(removed)} "
+                    f"~{len(changed)} recipient-changes) → reconciling",
                     flush=True,
                 )
-                self.shared_session_ids = new_set
-                n = initial_sync_all(self.sources, self.backend, new_set)
+                self.shared_session_info = new_info
+                n = initial_sync_all(self.sources, self.backend, new_info)
                 print(f"[sync] reconciliation complete: {n} files in sync", flush=True)
 
 
@@ -281,8 +321,17 @@ class MirrorHandler(FileSystemEventHandler):
         try:
             key = self._rel_key(src_path)
             data = Path(src_path).read_bytes()
-            self.state.backend.put_bytes(key, data)
-            print(f"[sync] {label} → {key}", flush=True)
+            sid: str | None = None
+            recipients: list[str] | None = None
+            if not self.is_workspace:
+                sid = extract_session_id_from_path(key)
+                if sid:
+                    recipients = self.state.recipients_for(sid)
+            self.state.backend.put_bytes(
+                key, data, session_id=sid, recipients=recipients,
+            )
+            recip_label = f" → [{', '.join(recipients)}]" if recipients else ""
+            print(f"[sync] {label} → {key}{recip_label}", flush=True)
             self._schedule_state_write()
         except Exception as e:
             print(f"[sync] error on {label} {src_path}: {e}", flush=True)
@@ -346,7 +395,15 @@ class MirrorHandler(FileSystemEventHandler):
             # an allowed session, just delete the old key (don't upload).
             if self._is_allowed_for_session_filter(new_key):
                 data = Path(event.dest_path).read_bytes()
-                self.state.backend.put_bytes(new_key, data)
+                sid: str | None = None
+                recipients: list[str] | None = None
+                if not self.is_workspace:
+                    sid = extract_session_id_from_path(new_key)
+                    if sid:
+                        recipients = self.state.recipients_for(sid)
+                self.state.backend.put_bytes(
+                    new_key, data, session_id=sid, recipients=recipients,
+                )
             self.state.backend.delete_key(old_key)
             print(f"[sync] moved → {new_key}", flush=True)
             self._schedule_state_write()

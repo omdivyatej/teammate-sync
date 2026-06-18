@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
 """
-teammate-sync share CLI (Phase 3d-A).
+teammate-sync share/connection CLI (v0.2).
 
-Maintains a per-workspace .shared-sessions.json registry — the gate that
-tells the daemon whether anything is shareable right now. Default state
-(no file, or file with empty sessions list) = nothing syncs to S3.
+Backs the slash commands. Maintains a per-machine .shared-sessions.json
+registry of session → recipients, used by the daemon as the upload gate.
 
-Invoked from Claude Code via slash commands in ~/.claude/commands/:
-    /share    → share-cli.py share        adds the current session
-    /unshare  → share-cli.py unshare      removes the current session
-    /shared   → share-cli.py list         shows what's currently shared
-
-The session id comes from CLAUDE_CODE_SESSION_ID, injected by Claude Code
-into any subprocess (including slash-command shell execution).
-
-Configuration:
-    TEAMMATE_SHARED_SESSIONS_FILE
-        Where to maintain the registry. Defaults to
-        ~/penguin-sim/.claude/.shared-sessions.json (the daemon's watched
-        dir in the local sim). In production this is wherever the
-        teammate's workspace lives.
-
-In-place fcntl-locked writes (same pattern as hook.py — atomic
-tmp+rename was avoided because macOS FSEvents races with the daemon).
+Slash commands wired to these subcommands (via cli.py):
+    /share <handle> [<handle> ...]   cmd_share(recipients)
+    /unshare [<sid>|--all]           cmd_unshare(target)
+    /shared                          cmd_list()
+    /connections                     cmd_connections()
+    /accept <handle>                 cmd_accept(handle)
+    /decline <handle>                cmd_decline(handle)
+    /disconnect <handle>             cmd_disconnect(handle)
+    /teammates                       cmd_teammates()
+    /show <handle> [<sid>]           cmd_show(handle, session_id)
 """
 import fcntl
 import json
@@ -81,50 +73,121 @@ def require_session_id() -> str | None:
     return sid
 
 
-def cmd_share() -> int:
+def _get_backend():
+    """Construct the cloud HTTPBackend for the current user. Raises on no auth."""
+    from .auth import read_auth
+    from .backend import HTTPBackend
+    import httpx
+
+    auth = read_auth()
+    r = httpx.get(
+        f"{auth['backend_url'].rstrip('/')}/v1/me",
+        headers={"Authorization": f"Bearer {auth['token']}"},
+        timeout=10.0,
+    )
+    if r.status_code != 200:
+        raise ValueError(
+            f"Cloud backend rejected token (/v1/me → {r.status_code}). "
+            f"Re-run `teammate-sync init` to refresh."
+        )
+    self_handle = r.json()["github_handle"]
+    return HTTPBackend(
+        backend_url=auth["backend_url"],
+        token=auth["token"],
+        org=auth["org"],
+        teammate=self_handle,
+    )
+
+
+# ─── /share ────────────────────────────────────────────────────────────────
+
+def cmd_share(recipients: list[str]) -> int:
+    """
+    Mark current Claude Code session as shared with `recipients`.
+    If `recipients` is empty, share with all currently-accepted connections.
+    For any recipient we don't have an accepted connection with yet, fire
+    a connection request immediately (so they see it on their next session
+    start) — content will then flow once they /accept.
+    """
     sid = require_session_id()
     if not sid:
         return 1
-
-    # Capture cwd so the daemon knows which project this session belongs to.
-    # CLAUDE_PROJECT_DIR is set by Claude Code in Bash subprocesses; fallback
-    # to actual cwd if the env var isn't available.
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or str(Path.cwd())
 
+    # Resolve recipients. If none given, use my accepted connections.
+    try:
+        backend = _get_backend()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    conn_results: dict[str, str] = {}
+
+    if not recipients:
+        conns = backend.list_connections()
+        recipients = sorted(c["peer_handle"] for c in conns.get("accepted", []))
+        if not recipients:
+            print("You have no accepted connections yet.")
+            print("To share with someone specifically: /share <github-handle>")
+            print("(if they haven't connected with you before, they'll get a")
+            print("pending invite to accept first; content flows once accepted.)")
+            return 1
+        print(f"No handles given — sharing with all {len(recipients)} accepted "
+              f"connection(s): {', '.join(recipients)}")
+        # Already-accepted, no need to re-request.
+    else:
+        # Validate: no self-share
+        my_handle = backend.teammate
+        recipients = [r for r in recipients if r != my_handle]
+        if not recipients:
+            print("Error: can't share with yourself.", file=sys.stderr)
+            return 1
+
+        # For each recipient, fire a connection request. The backend is
+        # idempotent — already-accepted = no-op, pending = no-op,
+        # mutual-interest = auto-accepts.
+        for peer in recipients:
+            try:
+                res = backend.request_connection(peer)
+                conn_results[peer] = res.get("status", "?")
+            except Exception as e:
+                conn_results[peer] = f"err: {e}"
+
+    # Update the local registry.
     def mod(state: dict) -> dict:
         sessions = state.get("sessions", [])
-        # Replace existing entry for this session_id (refresh cwd / shared_at)
         sessions = [s for s in sessions
                     if not (isinstance(s, dict) and s.get("session_id") == sid)]
         sessions.append({
             "session_id": sid,
             "cwd": cwd,
             "shared_at": now_iso(),
+            "recipients": recipients,
         })
         state["sessions"] = sessions
         return state
 
-    state = update_registry(mod)
-    n = len(state["sessions"])
-    print(f"✓ Session {sid[:8]} is now shareable with teammates.")
+    update_registry(mod)
+    print(f"✓ Session {sid[:8]} now shared with: {', '.join(recipients)}")
     print(f"  cwd: {cwd}")
-    print(f"  Total shared sessions: {n}")
+    for peer, status in conn_results.items():
+        if status == "pending":
+            print(f"  → connection request sent to {peer} (awaiting their /accept)")
+        elif status == "accepted":
+            print(f"  → already connected to {peer}; content flowing")
+        elif status.startswith("err:"):
+            print(f"  → ⚠ could not request connection to {peer}: {status}")
     print()
-    print("  Shared for the lifetime of this Claude Code session. When you")
-    print("  close it (or start a fresh one), the share auto-revokes and the")
-    print("  cloud copy is purged. Use /unshare to revoke sooner; /shared to audit.")
+    print("  Shared for the lifetime of this Claude Code session. /unshare to")
+    print("  revoke sooner; /shared to audit. /connections to see invite status.")
     return 0
 
 
+# ─── /unshare ──────────────────────────────────────────────────────────────
+
 def cmd_unshare(target: str | None = None) -> int:
     """
-    Unshare a session.
-
-    target:
-      - None        -> unshare the current Claude Code session
-                       (read from CLAUDE_CODE_SESSION_ID)
-      - "--all"     -> unshare every session in the registry
-      - "<sid>"     -> unshare that specific session_id (full or unambiguous prefix)
+    target: None = current session, "<sid>" = that session, "--all" = everything.
     """
     if target == "--all":
         if not TARGET_FILE.exists():
@@ -139,9 +202,8 @@ def cmd_unshare(target: str | None = None) -> int:
         return 0
 
     if target:
-        # Resolve target — accept full UUID or unambiguous prefix.
         if not TARGET_FILE.exists():
-            print(f"Nothing is currently shared, so nothing to unshare.")
+            print("Nothing is currently shared, so nothing to unshare.")
             return 0
         try:
             state = json.loads(TARGET_FILE.read_text())
@@ -182,23 +244,15 @@ def cmd_unshare(target: str | None = None) -> int:
         print("  No sessions remain shared. The daemon will clean up")
         print("  the team's shared store on its next event.")
     else:
-        print(f"  {n} other session(s) still shared — workspace continues syncing.")
+        print(f"  {n} other session(s) still shared.")
     return 0
 
 
 def remove_shared_session(session_id: str) -> bool:
-    """
-    Remove `session_id` from the shared registry. Returns True if removed,
-    False if it wasn't there (or the registry doesn't exist yet).
-
-    Called by the SessionEnd hook so share state never outlives the
-    Claude Code session it belonged to.
-    """
+    """Called by SessionEnd hook so share state doesn't outlive the session."""
     if not session_id or not TARGET_FILE.exists():
         return False
-
     removed = {"flag": False}
-
     def mod(state: dict) -> dict:
         sessions = state.get("sessions", [])
         before = len(sessions)
@@ -208,10 +262,11 @@ def remove_shared_session(session_id: str) -> bool:
         ]
         removed["flag"] = len(state["sessions"]) < before
         return state
-
     update_registry(mod)
     return removed["flag"]
 
+
+# ─── /shared ───────────────────────────────────────────────────────────────
 
 def cmd_list() -> int:
     if not TARGET_FILE.exists():
@@ -236,26 +291,171 @@ def cmd_list() -> int:
             continue
         sid = s.get("session_id", "?")
         marker = "  ← this session" if sid == cur else ""
+        recipients = s.get("recipients") or []
         print(f"  {sid}{marker}")
-        print(f"    shared: {s.get('shared_at', '?')}")
+        print(f"    shared with: {', '.join(recipients) if recipients else '(no recipients — not actually shared)'}")
+        print(f"    shared at:   {s.get('shared_at', '?')}")
         if s.get('cwd'):
-            print(f"    cwd:    {s['cwd']}")
+            print(f"    cwd:         {s['cwd']}")
         print()
     print("To unshare a specific session: /unshare <session-id>")
     print("To unshare ALL sessions:       /unshare --all")
     return 0
 
 
-def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in ("share", "unshare", "list"):
-        print("Usage: share-cli.py {share|unshare|list}", file=sys.stderr)
+# ─── /connections, /accept, /decline, /disconnect ──────────────────────────
+
+def cmd_connections() -> int:
+    try:
+        backend = _get_backend()
+        data = backend.list_connections()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    accepted = data.get("accepted", [])
+    pending_in = data.get("pending_incoming", [])
+    pending_out = data.get("pending_outgoing", [])
+
+    print(f"Connections in workspace '{data.get('org')}':")
+    print()
+    print(f"  Accepted ({len(accepted)}):")
+    if accepted:
+        for c in accepted:
+            who = "you" if c.get("i_initiated") else c["peer_handle"]
+            print(f"    - {c['peer_handle']}  (initiated by {who})")
+    else:
+        print(f"    (none yet — run /share <github-handle> to invite someone)")
+    print()
+    print(f"  Pending — they need to /accept you ({len(pending_out)}):")
+    for c in pending_out:
+        print(f"    → {c['peer_handle']}")
+    if not pending_out:
+        print(f"    (none)")
+    print()
+    print(f"  Pending — YOU can /accept or /decline ({len(pending_in)}):")
+    for c in pending_in:
+        print(f"    ← {c['peer_handle']}  /accept {c['peer_handle']}")
+    if not pending_in:
+        print(f"    (none)")
+    return 0
+
+
+def cmd_accept(handle: str) -> int:
+    if not handle:
+        print("Usage: /accept <github-handle>", file=sys.stderr)
         return 2
-    return {
-        "share": cmd_share,
-        "unshare": cmd_unshare,
-        "list": cmd_list,
-    }[sys.argv[1]]()
+    try:
+        backend = _get_backend()
+        res = backend.accept_connection(handle)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"✓ Accepted connection from {handle}.")
+    print(f"  Their shared sessions will now be visible to you when you /show {handle}")
+    print(f"  or query teammate-sync's MCP.")
+    return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def cmd_decline(handle: str) -> int:
+    if not handle:
+        print("Usage: /decline <github-handle>", file=sys.stderr)
+        return 2
+    try:
+        backend = _get_backend()
+        backend.decline_connection(handle)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"✓ Declined connection from {handle}.")
+    return 0
+
+
+def cmd_disconnect(handle: str) -> int:
+    if not handle:
+        print("Usage: /disconnect <github-handle>", file=sys.stderr)
+        return 2
+    try:
+        backend = _get_backend()
+        res = backend.disconnect_connection(handle)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"✓ Disconnected from {handle}.")
+    print(f"  Trust + per-session shares between you and {handle} removed.")
+    return 0
+
+
+# ─── /show ─────────────────────────────────────────────────────────────────
+
+def cmd_show(handle: str, session_id: str | None = None) -> int:
+    if not handle:
+        print("Usage: /show <github-handle> [<session-id>]", file=sys.stderr)
+        return 2
+    try:
+        backend = _get_backend()
+        result = backend.dump(handle, session_id)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if session_id is None:
+        # Index view: list visible files.
+        files = result.get("visible_files", [])
+        print(f"Files visible from {handle} ({len(files)}):")
+        if not files:
+            print(f"  (nothing — either {handle} hasn't shared with you yet,")
+            print(f"   or you haven't /accept'd their connection request)")
+        for f in files:
+            print(f"  {f['path']}  ({f['size']} bytes)")
+        if files:
+            print()
+            print(f"To dump a specific session: /show {handle} <session-id>")
+        return 0
+
+    # Session dump: stream the raw text.
+    print(f"# Raw dump: {handle}/{session_id}")
+    print(f"# (no AI synthesis — this is the literal session jsonl)")
+    print()
+    sys.stdout.buffer.write(result if isinstance(result, bytes) else str(result).encode())
+    print()
+    return 0
+
+
+# ─── /teammates ────────────────────────────────────────────────────────────
+
+def cmd_teammates() -> int:
+    """Slash command wrapper — lists org members."""
+    from .auth import read_auth
+    import httpx
+    try:
+        auth = read_auth()
+    except (FileNotFoundError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    r = httpx.get(
+        f"{auth['backend_url'].rstrip('/')}/v1/teammates",
+        params={"org": auth["org"]},
+        headers={"Authorization": f"Bearer {auth['token']}"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        print(f"Backend rejected the request ({r.status_code}): {r.text}")
+        return 1
+    members = sorted(r.json().get("teammates", []), key=lambda m: m["github_handle"])
+    print(f"Teammates in workspace '{auth['org']}' ({len(members)}):")
+    for m in members:
+        print(f"  - {m['github_handle']}")
+    print()
+    print("To share with someone:    /share <github-handle>")
+    print("To see who's connected:   /connections")
+    return 0

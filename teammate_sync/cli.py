@@ -318,75 +318,85 @@ def cmd_whoami(args) -> int:
 
 
 def cmd_teammates(args) -> int:
-    try:
-        auth = read_auth()
-    except (FileNotFoundError, ValueError) as e:
-        print(str(e))
-        return 1
-    r = httpx.get(
-        f"{auth['backend_url'].rstrip('/')}/v1/teammates",
-        params={"org": auth["org"]},
-        headers={"Authorization": f"Bearer {auth['token']}"},
-        timeout=20,
-    )
-    if r.status_code != 200:
-        print(f"Backend rejected the request ({r.status_code}): {r.text}")
-        return 1
-    members = sorted(r.json().get("teammates", []), key=lambda m: m["github_handle"])
-    print(f"Teammates in workspace '{auth['org']}' ({len(members)}):")
-    for m in members:
-        print(f"  - {m['github_handle']}")
-    return 0
+    from . import share_cli
+    return share_cli.cmd_teammates()
+
+
+SLASH_COMMAND_SPECS = {
+    "share": {
+        "subcmd": "share",
+        "args_hint": "<github-handle> [<github-handle> ...]",
+        "description": "Share THIS Claude Code session with one or more teammates by GitHub handle. They'll get an invite if not yet connected.",
+        "extra": "If no handles given, shares with all your currently-accepted connections.",
+    },
+    "unshare": {
+        "subcmd": "unshare",
+        "args_hint": "[session-id | --all]",
+        "description": "Unshare a Claude Code session. No args unshares THIS session; pass a session-id to unshare that specific one; pass --all to unshare everything.",
+    },
+    "shared": {
+        "subcmd": "shared",
+        "args_hint": "",
+        "description": "List currently-shared sessions and who each is shared with.",
+    },
+    "connections": {
+        "subcmd": "connections",
+        "args_hint": "",
+        "description": "List your teammate-sync connections: accepted + pending invites you've sent + invites you've received.",
+    },
+    "accept": {
+        "subcmd": "accept",
+        "args_hint": "<github-handle>",
+        "description": "Accept a pending connection request from a teammate.",
+    },
+    "decline": {
+        "subcmd": "decline",
+        "args_hint": "<github-handle>",
+        "description": "Decline a pending connection request from a teammate.",
+    },
+    "disconnect": {
+        "subcmd": "disconnect",
+        "args_hint": "<github-handle>",
+        "description": "Revoke trust with a teammate (and wipe all shares between you).",
+    },
+    "teammates": {
+        "subcmd": "teammates",
+        "args_hint": "",
+        "description": "List all members of your workspace GitHub org.",
+    },
+    "show": {
+        "subcmd": "show",
+        "args_hint": "<github-handle> [<session-id>]",
+        "description": "Raw dump of a teammate's session content — no AI synthesis. With no session-id, lists the session IDs visible to you.",
+    },
+}
 
 
 def _slash_command_md(action: str, binary: str) -> str:
     """
     Generate a slash-command markdown file. Calls the installed
-    `teammate-sync` binary so the same markdown works regardless of
-    where the package is installed.
-
-    /unshare accepts an optional argument via $ARGUMENTS — empty for
-    "this session", a session-id for a specific one, or --all to nuke
-    everything.
+    `teammate-sync` binary, passing $ARGUMENTS through verbatim, so the
+    same markdown works regardless of where the package is installed.
     """
-    if action == "unshare":
-        return f"""---
-description: Unshare a Claude Code session. No args unshares THIS session; pass a session-id to unshare that specific one; pass --all to unshare everything.
-argument-hint: "[session-id | --all]"
-allowed-tools: Bash({binary}:*)
----
-
-Execute this command via the Bash tool and show its full stdout
-output to the user verbatim:
-
-```
-{binary} unshare $ARGUMENTS
-```
-
-The CLAUDE_CODE_SESSION_ID env var is set by Claude Code in the Bash
-subprocess; the script falls back to it when no argument is given.
-
-After showing the output, do NOT add commentary.
-"""
-
-    descriptions = {
-        "share":  "Mark this Claude Code session as shareable with teammates via teammate-sync",
-        "shared": "List which Claude Code sessions are currently shared with teammates via teammate-sync",
-    }
+    spec = SLASH_COMMAND_SPECS[action]
+    hint_yaml = f'argument-hint: "{spec["args_hint"]}"\n' if spec["args_hint"] else ""
+    extra = spec.get("extra", "")
+    extra_block = f"\n{extra}\n" if extra else ""
     return f"""---
-description: {descriptions[action]}
-allowed-tools: Bash({binary}:*)
+description: {spec["description"]}
+{hint_yaml}allowed-tools: Bash({binary}:*)
 ---
 
-Execute this exact command via the Bash tool and show its full stdout
-output to the user verbatim:
+Execute this command via the Bash tool and show its full stdout output to
+the user verbatim:
 
 ```
-{binary} {action}
+{binary} {spec["subcmd"]} $ARGUMENTS
 ```
-
+{extra_block}
 The CLAUDE_CODE_SESSION_ID and CLAUDE_PROJECT_DIR env vars are set by
-Claude Code in the Bash subprocess — the script reads them from there.
+Claude Code in the Bash subprocess — the underlying command reads them
+when no explicit argument is given.
 
 After showing the output, do NOT add commentary.
 """
@@ -409,22 +419,19 @@ def _resolve_self_binary() -> str:
 
 
 def cmd_install_commands(args) -> int:
-    """Install /share, /unshare, /shared into ~/.claude/commands/ for this user."""
+    """Install all v0.2 slash commands into ~/.claude/commands/ for this user."""
     binary = _resolve_self_binary()
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
 
-    files = {
-        "share.md":   _slash_command_md("share",   binary),
-        "unshare.md": _slash_command_md("unshare", binary),
-        "shared.md":  _slash_command_md("shared",  binary),
-    }
-    for name, content in files.items():
-        (commands_dir / name).write_text(content)
-        print(f"  wrote {commands_dir / name}")
+    for action in SLASH_COMMAND_SPECS:
+        path = commands_dir / f"{action}.md"
+        path.write_text(_slash_command_md(action, binary))
+        print(f"  wrote {path}")
 
     print()
-    print(f"✓ Installed /share, /unshare, /shared into {commands_dir}")
+    print(f"✓ Installed slash commands into {commands_dir}:")
+    print(f"  {', '.join('/' + a for a in SLASH_COMMAND_SPECS)}")
     print(f"  Pointing at: {binary}")
     print()
     print("Restart any open Claude Code sessions to pick them up.")
@@ -433,7 +440,37 @@ def cmd_install_commands(args) -> int:
 
 def cmd_share(args) -> int:
     from . import share_cli
-    return share_cli.cmd_share()
+    return share_cli.cmd_share(args.recipients or [])
+
+
+def cmd_connections(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_connections()
+
+
+def cmd_accept(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_accept(args.handle)
+
+
+def cmd_decline(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_decline(args.handle)
+
+
+def cmd_disconnect(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_disconnect(args.handle)
+
+
+def cmd_show(args) -> int:
+    from . import share_cli
+    return share_cli.cmd_show(args.handle, args.session_id)
+
+
+def cmd_dashboard(args) -> int:
+    from . import dashboard as _dashboard
+    return _dashboard.run_dashboard(port=args.port, open_browser=not args.no_browser)
 
 
 def cmd_unshare(args) -> int:
@@ -505,8 +542,15 @@ def main() -> int:
     )
     p_install.set_defaults(func=cmd_install_commands)
 
-    # Direct-invoke commands (also reachable via the /share, /unshare, /shared slash commands)
-    sub.add_parser("share",   help="Mark the current Claude Code session as shareable.").set_defaults(func=cmd_share)
+    # Direct-invoke commands (also reachable via slash commands)
+    p_share = sub.add_parser(
+        "share",
+        help="Share this Claude Code session with one or more teammates.",
+    )
+    p_share.add_argument("recipients", nargs="*",
+                         help="GitHub handles to share with. If empty, shares with all accepted connections.")
+    p_share.set_defaults(func=cmd_share)
+
     p_unshare = sub.add_parser(
         "unshare",
         help="Unshare a session. No args = this session. "
@@ -517,7 +561,43 @@ def main() -> int:
     p_unshare.add_argument("--all", action="store_true",
                            help="Unshare every session in the registry.")
     p_unshare.set_defaults(func=cmd_unshare)
+
     sub.add_parser("shared",  help="List currently shared sessions.").set_defaults(func=cmd_shared)
+    sub.add_parser("connections",
+                   help="List your trust connections (accepted + pending).").set_defaults(func=cmd_connections)
+
+    p_accept = sub.add_parser("accept", help="Accept a pending connection request.")
+    p_accept.add_argument("handle", help="GitHub handle to accept")
+    p_accept.set_defaults(func=cmd_accept)
+
+    p_decline = sub.add_parser("decline", help="Decline a pending connection request.")
+    p_decline.add_argument("handle", help="GitHub handle to decline")
+    p_decline.set_defaults(func=cmd_decline)
+
+    p_disconnect = sub.add_parser("disconnect",
+                                  help="Revoke trust with a teammate (wipes shares between you).")
+    p_disconnect.add_argument("handle", help="GitHub handle to disconnect")
+    p_disconnect.set_defaults(func=cmd_disconnect)
+
+    p_show = sub.add_parser(
+        "show",
+        help="Raw dump of a teammate's session content — no AI synthesis.",
+    )
+    p_show.add_argument("handle", help="GitHub handle of the teammate")
+    p_show.add_argument("session_id", nargs="?", default=None,
+                        help="Session ID. If omitted, lists session IDs visible to you.")
+    p_show.set_defaults(func=cmd_show)
+
+    p_dash = sub.add_parser(
+        "dashboard",
+        help="Launch a localhost web dashboard showing all your sessions, "
+             "teammate sessions, and pending invites side-by-side.",
+    )
+    p_dash.add_argument("--port", type=int, default=None,
+                        help="Port to bind. Default: pick a free one.")
+    p_dash.add_argument("--no-browser", action="store_true",
+                        help="Don't automatically open the browser.")
+    p_dash.set_defaults(func=cmd_dashboard)
 
     p_daemon = sub.add_parser(
         "daemon",

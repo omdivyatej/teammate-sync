@@ -52,8 +52,21 @@ class StorageBackend(ABC):
         """Read bytes at key. Returns None if missing."""
 
     @abstractmethod
-    def put_bytes(self, key: str, data: bytes) -> None:
-        """Write bytes at key."""
+    def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> None:
+        """
+        Write bytes at key.
+
+        For session-jsonl uploads to the cloud backend, the caller passes
+        session_id + recipients so the backend can register the per-session
+        ACL row alongside the file. Local/S3 backends ignore these
+        parameters (they have no notion of ACL beyond owner).
+        """
 
     @abstractmethod
     def delete_key(self, key: str) -> None:
@@ -100,7 +113,14 @@ class LocalBackend(StorageBackend):
             return None
         return path.read_bytes()
 
-    def put_bytes(self, key: str, data: bytes) -> None:
+    def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> None:
+        # session_id + recipients ignored — local backend has no ACL.
         path = self.target / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
@@ -154,7 +174,14 @@ class S3Backend(StorageBackend):
                 return None
             raise
 
-    def put_bytes(self, key: str, data: bytes) -> None:
+    def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> None:
+        # session_id + recipients ignored — S3 backend has no ACL beyond bucket policy.
         self.s3.put_object(Bucket=self.bucket, Key=self._key(key), Body=data)
 
     def delete_key(self, key: str) -> None:
@@ -216,22 +243,37 @@ class HTTPBackend(StorageBackend):
             "/v1/files/get",
             params={"org": self.org, "teammate": self.teammate, "path": key},
         )
-        if r.status_code == 404:
+        # 404 = file genuinely missing. 403 = ACL forbids this read — treat
+        # as "not visible" rather than crashing the synthesis pipeline.
+        if r.status_code in (403, 404):
             return None
         r.raise_for_status()
         return r.content
 
-    def put_bytes(self, key: str, data: bytes) -> None:
+    def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> None:
+        """
+        Upload one file. For session jsonl files, pass session_id + recipients
+        so the backend registers per-session ACL rows alongside the file.
+        Non-session files (CLAUDE.md, scratch notes) leave both None.
+        """
         import base64
 
-        r = self._client.post(
-            "/v1/files",
-            json={
-                "org": self.org,
-                "path": key,
-                "content_b64": base64.b64encode(data).decode("ascii"),
-            },
-        )
+        payload = {
+            "org": self.org,
+            "path": key,
+            "content_b64": base64.b64encode(data).decode("ascii"),
+        }
+        if session_id:
+            payload["session_id"] = session_id
+        if recipients:
+            payload["recipients"] = recipients
+        r = self._client.post("/v1/files", json=payload)
         r.raise_for_status()
 
     def delete_key(self, key: str) -> None:
@@ -266,6 +308,68 @@ class HTTPBackend(StorageBackend):
         r = self._client.delete("/v1/files/purge", params={"org": self.org})
         r.raise_for_status()
         return r.json().get("deleted", 0)
+
+    # ─── v0.2: connections, dump, dashboard ────────────────────────────────
+
+    def list_connections(self) -> dict:
+        r = self._client.get("/v1/connections", params={"org": self.org})
+        r.raise_for_status()
+        return r.json()
+
+    def request_connection(self, peer: str) -> dict:
+        r = self._client.post(
+            "/v1/connections/request",
+            json={"org": self.org, "peer": peer},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def accept_connection(self, peer: str) -> dict:
+        r = self._client.post(
+            "/v1/connections/accept",
+            json={"org": self.org, "peer": peer},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def decline_connection(self, peer: str) -> dict:
+        r = self._client.post(
+            "/v1/connections/decline",
+            json={"org": self.org, "peer": peer},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def disconnect_connection(self, peer: str) -> dict:
+        r = self._client.post(
+            "/v1/connections/disconnect",
+            json={"org": self.org, "peer": peer},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def unshare_session(self, session_id: str, recipient: str | None = None) -> dict:
+        payload = {"org": self.org, "session_id": session_id}
+        if recipient is not None:
+            payload["recipient"] = recipient
+        r = self._client.post("/v1/sessions/unshare", json=payload)
+        r.raise_for_status()
+        return r.json()
+
+    def dump(self, teammate: str, session_id: str | None = None) -> bytes | dict:
+        params = {"org": self.org, "teammate": teammate}
+        if session_id:
+            params["session_id"] = session_id
+        r = self._client.get("/v1/dump", params=params)
+        r.raise_for_status()
+        if session_id:
+            return r.content
+        return r.json()
+
+    def dashboard(self) -> dict:
+        r = self._client.get("/v1/dashboard", params={"org": self.org})
+        r.raise_for_status()
+        return r.json()
 
     def __repr__(self) -> str:
         return f"HTTPBackend(url={self.backend_url}, org={self.org}, teammate={self.teammate})"

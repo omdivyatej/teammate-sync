@@ -109,7 +109,62 @@ def op_start(state: dict, payload: dict) -> dict:
     sessions = [s for s in sessions if s["session_id"] != session_id]
     sessions.append(entry)
     state["sessions"] = sessions
+
+    # Pending-invite notifier: fetch pending incoming connections from the
+    # backend and print a banner to stdout. Claude Code feeds SessionStart
+    # hook stdout into the session context, so Claude can mention them to
+    # the user proactively. Best-effort — never block the session.
+    _print_pending_invites_banner()
     return state
+
+
+def _print_pending_invites_banner() -> None:
+    """
+    Fetch pending invites + sessions newly shared with me, print a one-screen
+    banner Claude will surface to the user. Strict 3s timeout — Claude Code's
+    hook budget is 5s and we must not break session start.
+    """
+    try:
+        import httpx
+        from .auth import read_auth
+        auth = read_auth()
+    except Exception:
+        return  # not configured yet, nothing to do
+    try:
+        r = httpx.get(
+            f"{auth['backend_url'].rstrip('/')}/v1/connections",
+            params={"org": auth["org"]},
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=3.0,
+        )
+        if r.status_code != 200:
+            return
+        data = r.json()
+    except Exception:
+        return  # network hiccup, never block startup
+
+    pending_in = data.get("pending_incoming") or []
+    pending_out = data.get("pending_outgoing") or []
+    if not pending_in and not pending_out:
+        return  # nothing to surface
+
+    lines = ["[teammate-sync] pending teammate activity:"]
+    if pending_in:
+        lines.append(
+            f"  You have {len(pending_in)} pending connection request"
+            f"{'s' if len(pending_in) != 1 else ''}:"
+        )
+        for c in pending_in:
+            lines.append(f"    /accept {c['peer_handle']}  (or /decline {c['peer_handle']})")
+    if pending_out:
+        lines.append(
+            f"  You sent {len(pending_out)} connection request"
+            f"{'s' if len(pending_out) != 1 else ''} (waiting on them):"
+        )
+        for c in pending_out:
+            lines.append(f"    → {c['peer_handle']}")
+    lines.append("  Run /connections to see full state.")
+    print("\n".join(lines))
 
 
 def op_heartbeat(state: dict, payload: dict) -> dict:

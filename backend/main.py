@@ -1,8 +1,9 @@
 """
-teammate-sync cloud backend.
+teammate-sync cloud backend (v0.2).
 
-Stateless GitHub-OAuth identity + SQLite-backed file storage so engineers'
-daemons can sync into a single shared store, scoped to their GitHub org.
+Stateless GitHub-OAuth identity + SQLite-backed file storage with per-session
+ACL ("directed share" model). Engineers in the same workspace org choose
+specifically who can see each session they share.
 
 Auth model: clients send `Authorization: Bearer <github-access-token>`.
 We validate via api.github.com on every request (small cache for performance).
@@ -10,20 +11,38 @@ Workspace = GitHub organization. Membership = `gh api orgs/<X>/members`.
 
 Endpoints:
   /health
-  /auth/github/{login,callback}      browser-driven OAuth
-  /v1/me                              who am I (verified via GitHub)
-  /v1/teammates?org=X                 list workspace members
-  /v1/files?teammate=X                list files in a teammate's corpus
-  /v1/files/get?teammate=X&path=Y     get a file's bytes
-  /v1/files                           POST upload a file (owned by caller)
-  /v1/files                           DELETE one file (owned by caller)
-  /v1/files/purge                     DELETE all caller's files in a workspace
-  /v1/state?teammate=X                GET freshness for a teammate
-  /v1/state                           POST mark caller's corpus as just-synced
+  /auth/github/{login,callback}        browser-driven OAuth
 
-All /v1/files and /v1/state endpoints enforce: caller must be a member of
-the workspace (org) they're operating on. Reads can target any teammate in
-that workspace; writes always target the caller's own handle.
+  /v1/me                                who am I (verified via GitHub)
+  /v1/teammates?org=X                   list workspace members (org-wide)
+
+  /v1/files?teammate=X                  list a teammate's files (ACL-gated)
+  /v1/files/get?teammate=X&path=Y       get a file's bytes (ACL-gated)
+  /v1/files                             POST upload a file (caller owns it).
+                                        body: {org, path, content_b64,
+                                               session_id?, recipients[]}
+  /v1/files                             DELETE one file (caller owns it)
+  /v1/files/purge?org=X                 DELETE all caller's files in workspace
+
+  /v1/state?teammate=X                  GET freshness for a teammate
+  /v1/state                             POST mark caller's corpus as just-synced
+
+  /v1/connections?org=X                 GET list my connections
+                                        (accepted + pending_incoming + pending_outgoing)
+  /v1/connections/request               POST {org, peer} → send/refresh request
+  /v1/connections/accept                POST {org, peer} → accept pending from peer
+  /v1/connections/decline               POST {org, peer} → decline pending from peer
+  /v1/connections/disconnect            POST {org, peer} → revoke trust both ways
+
+  /v1/sessions/share                    POST {org, session_id, recipients[]} →
+                                        mark session as shared with these handles.
+  /v1/sessions/unshare                  POST {org, session_id, recipient?} →
+                                        revoke; if recipient omitted, revoke from all.
+
+  /v1/dump?teammate=X&session_id=Y      GET raw concatenation of a teammate's
+                                        session for the /show slash command —
+                                        no AI synthesis.
+  /v1/dashboard?org=X                   GET aggregated state for the dashboard UI.
 """
 import os
 import secrets
@@ -63,7 +82,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="teammate-sync cloud backend",
-    description="GitHub-OAuth identity + SQLite-backed file storage for teammate-sync clients.",
+    description="GitHub-OAuth identity + SQLite-backed file storage with per-session ACL.",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -106,7 +125,9 @@ class FileListResponse(BaseModel):
 class FileUploadRequest(BaseModel):
     org: str
     path: str
-    content_b64: str  # base64-encoded bytes
+    content_b64: str
+    session_id: str | None = None
+    recipients: list[str] = []
 
 
 class SyncStateResponse(BaseModel):
@@ -115,16 +136,32 @@ class SyncStateResponse(BaseModel):
     last_sync_epoch: float | None
 
 
+class ConnectionRequest(BaseModel):
+    org: str
+    peer: str
+
+
+class SessionShareRequest(BaseModel):
+    org: str
+    session_id: str
+    recipients: list[str] = []
+
+
+class SessionUnshareRequest(BaseModel):
+    org: str
+    session_id: str
+    recipient: str | None = None
+
+
 # ─── Auth helpers ──────────────────────────────────────────────────────────
 
 GITHUB_USER_CACHE: dict[str, dict] = {}
-GITHUB_MEMBERSHIP_CACHE: dict[tuple[str, str], bool] = {}  # (token, org) → is_member
+GITHUB_MEMBERSHIP_CACHE: dict[tuple[str, str], bool] = {}
 
 
 async def github_user_from_bearer(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict:
-    """Validate the Bearer token by calling GitHub /user. Returns user object."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
     token = authorization.split(None, 1)[1].strip()
@@ -157,13 +194,12 @@ async def github_user_from_bearer(
             if primary:
                 user["email"] = primary["email"]
 
-    user["__token__"] = token  # stash so downstream handlers can reuse for membership checks
+    user["__token__"] = token
     GITHUB_USER_CACHE[token] = user
     return user
 
 
 async def require_workspace_member(user: dict, org: str) -> None:
-    """Verify the authenticated user is a member of the given GitHub org. 403 if not."""
     token = user["__token__"]
     cache_key = (token, org)
     if GITHUB_MEMBERSHIP_CACHE.get(cache_key):
@@ -192,13 +228,10 @@ def health() -> HealthResponse:
 def github_login(redirect_uri: str | None = None):
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Server missing GITHUB_CLIENT_ID")
-
     from urllib.parse import urlencode
-
     state = secrets.token_urlsafe(24)
     if redirect_uri:
         state = f"{state}|{redirect_uri}"
-
     params = {
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
@@ -213,7 +246,6 @@ def github_login(redirect_uri: str | None = None):
 async def github_callback(code: str, state: str = ""):
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=500, detail="Server missing GitHub OAuth credentials")
-
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             f"{GITHUB_OAUTH}/access_token",
@@ -235,7 +267,6 @@ async def github_callback(code: str, state: str = ""):
     cli_redirect = ""
     if "|" in state:
         _, cli_redirect = state.split("|", 1)
-
     if cli_redirect:
         from urllib.parse import urlencode
         return RedirectResponse(url=f"{cli_redirect}?{urlencode({'access_token': access_token})}")
@@ -243,9 +274,7 @@ async def github_callback(code: str, state: str = ""):
     html = f"""
     <!doctype html><html><body style="font-family: -apple-system, sans-serif; max-width: 640px; margin: 4em auto; padding: 1em;">
       <h2>teammate-sync — signed in</h2>
-      <p>Paste this into your terminal:</p>
-      <pre style="background:#f6f8fa;padding:1em;border-radius:6px;user-select:all;">teammate-sync auth set-token {access_token}</pre>
-      <p style="color:#555;">You can close this tab.</p>
+      <p>You can close this tab and return to your terminal.</p>
     </body></html>
     """
     return HTMLResponse(content=html)
@@ -263,13 +292,9 @@ async def me(user: dict = Depends(github_user_from_bearer)) -> MeResponse:
 
 
 @app.get("/v1/teammates", response_model=TeammatesResponse)
-async def teammates(
-    org: str,
-    user: dict = Depends(github_user_from_bearer),
-) -> TeammatesResponse:
+async def teammates(org: str, user: dict = Depends(github_user_from_bearer)) -> TeammatesResponse:
     await require_workspace_member(user, org)
     token = user["__token__"]
-
     members: list[Teammate] = []
     async with httpx.AsyncClient(timeout=15) as client:
         page = 1
@@ -288,11 +313,10 @@ async def teammates(
             if len(batch) < 100:
                 break
             page += 1
-
     return TeammatesResponse(org=org, teammates=members)
 
 
-# ─── File storage ──────────────────────────────────────────────────────────
+# ─── File storage (ACL-gated) ──────────────────────────────────────────────
 
 @app.get("/v1/files", response_model=FileListResponse)
 async def list_files(
@@ -300,9 +324,9 @@ async def list_files(
     teammate: str,
     user: dict = Depends(github_user_from_bearer),
 ) -> FileListResponse:
-    """List all files in a teammate's corpus. Caller must be in same org."""
+    """List files in a teammate's corpus, filtered to those the caller is allowed to see."""
     await require_workspace_member(user, org)
-    entries = await storage.list_paths(org, teammate)
+    entries = await storage.list_visible_paths(org, user["login"], teammate)
     return FileListResponse(
         org=org,
         teammate=teammate,
@@ -317,8 +341,9 @@ async def get_file(
     path: str,
     user: dict = Depends(github_user_from_bearer),
 ):
-    """Return raw bytes of one file. Caller must be in same org."""
     await require_workspace_member(user, org)
+    if not await storage.can_read_file(org, user["login"], teammate, path):
+        raise HTTPException(status_code=403, detail=f"Not allowed to read {teammate}/{path}")
     content = await storage.get_file(org, teammate, path)
     if content is None:
         raise HTTPException(status_code=404, detail=f"File not found: {teammate}/{path}")
@@ -330,7 +355,10 @@ async def upload_file(
     req: FileUploadRequest,
     user: dict = Depends(github_user_from_bearer),
 ) -> dict:
-    """Upload a file owned by the caller. Caller must be in the given org."""
+    """
+    Upload a file owned by the caller. If session_id + recipients are
+    supplied, also (re-)registers the session_shares rows.
+    """
     await require_workspace_member(user, req.org)
     import base64
     try:
@@ -338,7 +366,18 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"content_b64 not valid base64: {e}")
     await storage.put_file(req.org, user["login"], req.path, content)
-    return {"ok": True, "owner": user["login"], "path": req.path, "size": len(content)}
+    n_shares = 0
+    if req.session_id and req.recipients:
+        n_shares = await storage.share_session(
+            req.org, user["login"], req.session_id, req.recipients
+        )
+    return {
+        "ok": True,
+        "owner": user["login"],
+        "path": req.path,
+        "size": len(content),
+        "shares_registered": n_shares,
+    }
 
 
 @app.delete("/v1/files")
@@ -347,7 +386,6 @@ async def delete_one_file(
     path: str,
     user: dict = Depends(github_user_from_bearer),
 ) -> dict:
-    """Delete one of the caller's own files. Caller must be in the given org."""
     await require_workspace_member(user, org)
     n = await storage.delete_file(org, user["login"], path)
     return {"ok": True, "deleted": n}
@@ -358,7 +396,6 @@ async def purge_my_files(
     org: str,
     user: dict = Depends(github_user_from_bearer),
 ) -> dict:
-    """Delete EVERY file owned by the caller in the given workspace (used by /unshare)."""
     await require_workspace_member(user, org)
     n = await storage.purge_owner(org, user["login"])
     return {"ok": True, "deleted": n}
@@ -386,7 +423,134 @@ async def put_state(
     org: str,
     user: dict = Depends(github_user_from_bearer),
 ) -> dict:
-    """Mark caller's corpus as just-synced (now). Daemon calls this after batches."""
     await require_workspace_member(user, org)
     await storage.put_sync_state(org, user["login"])
     return {"ok": True}
+
+
+# ─── Connections ───────────────────────────────────────────────────────────
+
+@app.get("/v1/connections")
+async def get_connections(
+    org: str,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, org)
+    return {"org": org, **await storage.list_connections(org, user["login"])}
+
+
+@app.post("/v1/connections/request")
+async def post_connection_request(
+    req: ConnectionRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    try:
+        result = await storage.connection_request(req.org, user["login"], req.peer)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, **result}
+
+
+@app.post("/v1/connections/accept")
+async def post_connection_accept(
+    req: ConnectionRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    updated = await storage.connection_decide(req.org, user["login"], req.peer, accept=True)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"No pending request from {req.peer}")
+    return {"ok": True, "status": "accepted"}
+
+
+@app.post("/v1/connections/decline")
+async def post_connection_decline(
+    req: ConnectionRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    updated = await storage.connection_decide(req.org, user["login"], req.peer, accept=False)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"No pending request from {req.peer}")
+    return {"ok": True, "status": "declined"}
+
+
+@app.post("/v1/connections/disconnect")
+async def post_connection_disconnect(
+    req: ConnectionRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    n = await storage.connection_disconnect(req.org, user["login"], req.peer)
+    return {"ok": True, "removed_rows": n}
+
+
+# ─── Session shares (per-session ACL) ──────────────────────────────────────
+
+@app.post("/v1/sessions/share")
+async def post_session_share(
+    req: SessionShareRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    n = await storage.share_session(req.org, user["login"], req.session_id, req.recipients)
+    return {"ok": True, "registered": n}
+
+
+@app.post("/v1/sessions/unshare")
+async def post_session_unshare(
+    req: SessionUnshareRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    await require_workspace_member(user, req.org)
+    n = await storage.unshare_session(req.org, user["login"], req.session_id, req.recipient)
+    return {"ok": True, "removed": n}
+
+
+# ─── Dump (raw view, no synthesis) ─────────────────────────────────────────
+
+@app.get("/v1/dump")
+async def dump_session(
+    org: str,
+    teammate: str,
+    session_id: str | None = None,
+    user: dict = Depends(github_user_from_bearer),
+):
+    """
+    Return a raw concatenation of teammate's session file (or any visible file
+    if session_id == 'CLAUDE.md' etc). Used by the /show slash command —
+    purely for human/debug inspection, no AI processing.
+
+    If session_id is omitted, returns a list of visible session IDs instead.
+    """
+    await require_workspace_member(user, org)
+    if session_id is None:
+        files = await storage.list_visible_paths(org, user["login"], teammate)
+        return {
+            "org": org,
+            "teammate": teammate,
+            "visible_files": files,
+        }
+    path = f"{session_id}.jsonl" if not session_id.endswith(".jsonl") else session_id
+    if not await storage.can_read_file(org, user["login"], teammate, path):
+        raise HTTPException(status_code=403, detail=f"Not allowed to read {teammate}/{path}")
+    content = await storage.get_file(org, teammate, path)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {teammate}/{path}")
+    return Response(content=content, media_type="application/octet-stream")
+
+
+# ─── Dashboard ─────────────────────────────────────────────────────────────
+
+@app.get("/v1/dashboard")
+async def dashboard(
+    org: str,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """
+    Single-page aggregated state for the dashboard UI. Returns everything
+    the dashboard needs in one round-trip so polling stays cheap.
+    """
+    await require_workspace_member(user, org)
+    return await storage.dashboard_snapshot(org, user["login"])
