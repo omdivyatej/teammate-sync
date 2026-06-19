@@ -452,10 +452,10 @@ def main() -> int:
     state = DaemonState(workspace, sources, backend)
 
     if state.is_active:
-        n = initial_sync_all(sources, backend, state.shared_session_ids)
+        n = initial_sync_all(sources, backend, state.shared_session_info)
         print(
             f"[sync] initial sync complete: {n} files uploaded "
-            f"({len(state.shared_session_ids)} session(s) /share'd)",
+            f"({len(state.shared_session_info)} session(s) /share'd)",
             flush=True,
         )
     else:
