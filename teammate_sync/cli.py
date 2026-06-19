@@ -322,66 +322,77 @@ def cmd_teammates(args) -> int:
     return share_cli.cmd_teammates()
 
 
+# v0.3 slash command surface — four commands total.
+# /ask is special: it doesn't shell out to the binary; instead the .md tells
+# Claude Code to call the MCP tool directly with parsed args.
 SLASH_COMMAND_SPECS = {
-    "share": {
-        "subcmd": "share",
-        "args_hint": "<github-handle> [<github-handle> ...]",
-        "description": "Share THIS Claude Code session with one or more teammates by GitHub handle. They'll get an invite if not yet connected.",
-        "extra": "If no handles given, shares with all your currently-accepted connections.",
+    "connect": {
+        "subcmd": "connect",
+        "args_hint": "[github-handle ...]",
+        "description": (
+            "Share THIS Claude Code session with one or more teammates. "
+            "No args lists workspace members + their current status."
+        ),
     },
-    "unshare": {
-        "subcmd": "unshare",
-        "args_hint": "[session-id | --all]",
-        "description": "Unshare a Claude Code session. No args unshares THIS session; pass a session-id to unshare that specific one; pass --all to unshare everything.",
+    "disconnect": {
+        "subcmd": "disconnect",
+        "args_hint": "[github-handle]",
+        "description": (
+            "Remove trust. No args = nuke everything (every connection + this session's shares). "
+            "Pass a handle to disconnect just that one teammate."
+        ),
     },
     "shared": {
         "subcmd": "shared",
         "args_hint": "",
-        "description": "List currently-shared sessions and who each is shared with.",
-    },
-    "connections": {
-        "subcmd": "connections",
-        "args_hint": "",
-        "description": "List your teammate-sync connections: accepted + pending invites you've sent + invites you've received.",
-    },
-    "accept": {
-        "subcmd": "accept",
-        "args_hint": "<github-handle>",
-        "description": "Accept a pending connection request from a teammate.",
-    },
-    "decline": {
-        "subcmd": "decline",
-        "args_hint": "<github-handle>",
-        "description": "Decline a pending connection request from a teammate.",
-    },
-    "disconnect": {
-        "subcmd": "disconnect",
-        "args_hint": "<github-handle>",
-        "description": "Revoke trust with a teammate (and wipe all shares between you).",
-    },
-    "teammates": {
-        "subcmd": "teammates",
-        "args_hint": "",
-        "description": "List all members of your workspace GitHub org.",
-    },
-    "show": {
-        "subcmd": "show",
-        "args_hint": "<github-handle> [<session-id>]",
-        "description": "Raw dump of a teammate's session content — no AI synthesis. With no session-id, lists the session IDs visible to you.",
+        "description": "Audit which sessions are currently shareable and with whom.",
     },
 }
+
+# Slash commands no longer in v0.3 — install-commands deletes these files if
+# present so users upgrading from v0.2 don't end up with stale half-broken
+# commands lying around in ~/.claude/commands/.
+_RETIRED_SLASH_COMMANDS = {
+    "share", "unshare", "connections", "accept", "decline", "teammates", "show",
+}
+
+
+_ASK_SLASH_MD = """---
+description: Ask a connected teammate (or several) a question. Claude synthesizes the answer from their shared Claude Code context.
+argument-hint: "<handle>[,<handle>...] <question>"
+---
+
+The user wants to query teammate-sync. Parse the user's argument as:
+  - first whitespace-separated token = a comma-separated list of GitHub handles
+  - everything after the first token = the question text
+
+For each handle in the list, call the MCP tool
+`mcp__teammate-sync__query_teammate_context` with that handle and the
+question. If the user asked about multiple handles, call the tool once
+per handle (in parallel where possible) and present the answers grouped
+clearly by handle.
+
+If the tool returns "Not found in shared context." for a handle, surface
+that to the user with a hint: they may need to run `/connect <handle>`
+first, or that teammate hasn't `/connect`-ed this Claude session back yet.
+
+The user's argument is: $ARGUMENTS
+
+Do not add commentary beyond what the tool returns.
+"""
 
 
 def _slash_command_md(action: str, binary: str) -> str:
     """
-    Generate a slash-command markdown file. Calls the installed
-    `teammate-sync` binary, passing $ARGUMENTS through verbatim, so the
-    same markdown works regardless of where the package is installed.
+    Generate a slash-command markdown file. Most slash commands shell out to
+    the installed `teammate-sync` binary; /ask is special and tells Claude
+    to call the MCP tool directly.
     """
+    if action == "ask":
+        return _ASK_SLASH_MD
+
     spec = SLASH_COMMAND_SPECS[action]
     hint_yaml = f'argument-hint: "{spec["args_hint"]}"\n' if spec["args_hint"] else ""
-    extra = spec.get("extra", "")
-    extra_block = f"\n{extra}\n" if extra else ""
     return f"""---
 description: {spec["description"]}
 {hint_yaml}allowed-tools: Bash({binary}:*)
@@ -393,13 +404,18 @@ the user verbatim:
 ```
 {binary} {spec["subcmd"]} $ARGUMENTS
 ```
-{extra_block}
+
 The CLAUDE_CODE_SESSION_ID and CLAUDE_PROJECT_DIR env vars are set by
 Claude Code in the Bash subprocess — the underlying command reads them
 when no explicit argument is given.
 
 After showing the output, do NOT add commentary.
 """
+
+
+# Order matters for the install summary print: list in the order they'd
+# logically be used.
+_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "ask"]
 
 
 def _resolve_self_binary() -> str:
@@ -419,65 +435,56 @@ def _resolve_self_binary() -> str:
 
 
 def cmd_install_commands(args) -> int:
-    """Install all v0.2 slash commands into ~/.claude/commands/ for this user."""
+    """Install all v0.3 slash commands into ~/.claude/commands/. Also clean up
+    any stale v0.2 slash commands so users don't end up with broken /share,
+    /unshare, /accept, etc."""
     binary = _resolve_self_binary()
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
 
-    for action in SLASH_COMMAND_SPECS:
+    # Clean up retired v0.2 slash commands
+    cleaned = 0
+    for retired in _RETIRED_SLASH_COMMANDS:
+        old_path = commands_dir / f"{retired}.md"
+        if old_path.exists():
+            old_path.unlink()
+            cleaned += 1
+            print(f"  removed stale /{retired} (no longer in v0.3)")
+
+    # Write the v0.3 set
+    for action in _INSTALL_ACTIONS:
         path = commands_dir / f"{action}.md"
         path.write_text(_slash_command_md(action, binary))
         print(f"  wrote {path}")
 
     print()
     print(f"✓ Installed slash commands into {commands_dir}:")
-    print(f"  {', '.join('/' + a for a in SLASH_COMMAND_SPECS)}")
+    print(f"  {', '.join('/' + a for a in _INSTALL_ACTIONS)}")
+    if cleaned:
+        print(f"  ({cleaned} retired v0.2 command(s) removed)")
     print(f"  Pointing at: {binary}")
     print()
     print("Restart any open Claude Code sessions to pick them up.")
     return 0
 
 
-def cmd_share(args) -> int:
+def cmd_connect(args) -> int:
+    """No args → list workspace + status. With args → share this session with handles."""
     from . import share_cli
-    return share_cli.cmd_share(args.recipients or [])
-
-
-def cmd_connections(args) -> int:
-    from . import share_cli
-    return share_cli.cmd_connections()
-
-
-def cmd_accept(args) -> int:
-    from . import share_cli
-    return share_cli.cmd_accept(args.handle)
-
-
-def cmd_decline(args) -> int:
-    from . import share_cli
-    return share_cli.cmd_decline(args.handle)
+    if not args.recipients:
+        return share_cli.cmd_connect_list()
+    return share_cli.cmd_share(args.recipients)
 
 
 def cmd_disconnect(args) -> int:
+    """No arg → nuke all trust + wipe local shares. With arg → remove that one peer."""
     from . import share_cli
     return share_cli.cmd_disconnect(args.handle)
-
-
-def cmd_show(args) -> int:
-    from . import share_cli
-    return share_cli.cmd_show(args.handle, args.session_id)
 
 
 def cmd_dashboard(args) -> int:
     from . import dashboard as _dashboard
     return _dashboard.run_dashboard(port=args.port, open_browser=not args.no_browser)
-
-
-def cmd_unshare(args) -> int:
-    from . import share_cli
-    if args.all:
-        return share_cli.cmd_unshare(target="--all")
-    return share_cli.cmd_unshare(args.target)
 
 
 def cmd_shared(args) -> int:
@@ -490,6 +497,159 @@ def cmd_daemon(args) -> int:
     # daemon's main() reads sys.argv; replace it so the global state dirs are used
     sys.argv = ["teammate-sync-daemon"] + (args.extra or [])
     return _daemon.main()
+
+
+# ─── teammate-sync up / down / logs ────────────────────────────────────────
+
+def _state_dir() -> Path:
+    return Path("~/.teammate-sync/state").expanduser()
+
+
+def _pid_file() -> Path:
+    return _state_dir() / "daemon.pid"
+
+
+def _log_file() -> Path:
+    return _state_dir() / "daemon.log"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Cheap check: signal 0 raises if process doesn't exist."""
+    import os as _os
+    try:
+        _os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+    except OSError:
+        return False
+
+
+def _read_pid() -> int | None:
+    p = _pid_file()
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
+def cmd_up(args) -> int:
+    """Spawn the daemon in the background, write PID, redirect logs to a file."""
+    import subprocess as _sp
+    import time as _time
+
+    _state_dir().mkdir(parents=True, exist_ok=True)
+
+    existing = _read_pid()
+    if existing and _pid_alive(existing):
+        print(f"daemon already running (pid {existing}).")
+        print(f"logs:  teammate-sync logs")
+        print(f"stop:  teammate-sync down")
+        return 0
+    if existing:
+        # Stale pidfile — drop it.
+        _pid_file().unlink(missing_ok=True)
+
+    binary = _resolve_self_binary()
+    log = _log_file()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = open(log, "a")
+    log_handle.write(f"\n--- daemon up at {_iso_now()} ---\n")
+    log_handle.flush()
+
+    # start_new_session detaches from this terminal's process group so the
+    # daemon survives terminal close + isn't a Job under shell control.
+    proc = _sp.Popen(
+        [binary, "daemon"],
+        stdout=log_handle,
+        stderr=_sp.STDOUT,
+        stdin=_sp.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+    )
+    _pid_file().write_text(str(proc.pid))
+
+    # Give it ~1.5s to boot, then verify it's still alive.
+    _time.sleep(1.5)
+    if not _pid_alive(proc.pid):
+        print(f"daemon failed to start. Last log lines:", file=sys.stderr)
+        try:
+            print(_log_file().read_text()[-2000:], file=sys.stderr)
+        except OSError:
+            pass
+        _pid_file().unlink(missing_ok=True)
+        return 1
+
+    print(f"✓ daemon up (pid {proc.pid})")
+    print(f"  logs:      teammate-sync logs")
+    print(f"  dashboard: teammate-sync dashboard")
+    print(f"  stop:      teammate-sync down")
+    return 0
+
+
+def cmd_down(args) -> int:
+    """Send TERM to the backgrounded daemon, escalate to KILL if needed."""
+    import os as _os
+    import signal as _signal
+    import time as _time
+
+    pid = _read_pid()
+    if pid is None:
+        print("daemon not running (no pidfile).")
+        return 0
+    if not _pid_alive(pid):
+        print(f"daemon not running (stale pidfile for pid {pid}; cleaning up).")
+        _pid_file().unlink(missing_ok=True)
+        return 0
+
+    try:
+        _os.kill(pid, _signal.SIGTERM)
+    except ProcessLookupError:
+        _pid_file().unlink(missing_ok=True)
+        print("daemon already gone.")
+        return 0
+
+    # Wait up to 5 seconds for clean shutdown.
+    for _ in range(50):
+        if not _pid_alive(pid):
+            break
+        _time.sleep(0.1)
+    else:
+        # Escalate.
+        try:
+            _os.kill(pid, _signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    _pid_file().unlink(missing_ok=True)
+    print(f"✓ daemon stopped (pid {pid}).")
+    return 0
+
+
+def cmd_logs(args) -> int:
+    """Tail the daemon log. With -f, follow."""
+    import subprocess as _sp
+    log = _log_file()
+    if not log.exists():
+        print("no daemon log yet (run `teammate-sync up` to start the daemon).")
+        return 0
+    cmd = ["tail"]
+    if args.follow:
+        cmd.append("-f")
+    if args.lines:
+        cmd.extend(["-n", str(args.lines)])
+    cmd.append(str(log))
+    try:
+        return _sp.call(cmd)
+    except KeyboardInterrupt:
+        return 0
+
+
+def _iso_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def cmd_hook(args) -> int:
@@ -538,56 +698,51 @@ def main() -> int:
 
     p_install = sub.add_parser(
         "install-commands",
-        help="Reinstall /share, /unshare, /shared slash commands into ~/.claude/commands/.",
+        help="Reinstall the v0.3 slash commands into ~/.claude/commands/. "
+             "Cleans up any retired v0.2 commands automatically.",
     )
     p_install.set_defaults(func=cmd_install_commands)
 
-    # Direct-invoke commands (also reachable via slash commands)
-    p_share = sub.add_parser(
-        "share",
-        help="Share this Claude Code session with one or more teammates.",
+    # ── v0.3 minimal slash-backing surface ──
+    p_connect = sub.add_parser(
+        "connect",
+        help="Share this Claude Code session with named teammates "
+             "(no args = list workspace + status).",
     )
-    p_share.add_argument("recipients", nargs="*",
-                         help="GitHub handles to share with. If empty, shares with all accepted connections.")
-    p_share.set_defaults(func=cmd_share)
+    p_connect.add_argument("recipients", nargs="*",
+                           help="GitHub handles to share with. Empty = list mode.")
+    p_connect.set_defaults(func=cmd_connect)
 
-    p_unshare = sub.add_parser(
-        "unshare",
-        help="Unshare a session. No args = this session. "
-             "<session-id> = that specific one. --all = nuke everything.",
+    p_disconnect = sub.add_parser(
+        "disconnect",
+        help="Disconnect. No arg = nuke ALL connections + local shares. "
+             "<handle> = remove just that one.",
     )
-    p_unshare.add_argument("target", nargs="?", default=None,
-                           help="Session ID (full or unambiguous prefix)")
-    p_unshare.add_argument("--all", action="store_true",
-                           help="Unshare every session in the registry.")
-    p_unshare.set_defaults(func=cmd_unshare)
-
-    sub.add_parser("shared",  help="List currently shared sessions.").set_defaults(func=cmd_shared)
-    sub.add_parser("connections",
-                   help="List your trust connections (accepted + pending).").set_defaults(func=cmd_connections)
-
-    p_accept = sub.add_parser("accept", help="Accept a pending connection request.")
-    p_accept.add_argument("handle", help="GitHub handle to accept")
-    p_accept.set_defaults(func=cmd_accept)
-
-    p_decline = sub.add_parser("decline", help="Decline a pending connection request.")
-    p_decline.add_argument("handle", help="GitHub handle to decline")
-    p_decline.set_defaults(func=cmd_decline)
-
-    p_disconnect = sub.add_parser("disconnect",
-                                  help="Revoke trust with a teammate (wipes shares between you).")
-    p_disconnect.add_argument("handle", help="GitHub handle to disconnect")
+    p_disconnect.add_argument("handle", nargs="?", default=None,
+                              help="GitHub handle. Omit to disconnect from everyone.")
     p_disconnect.set_defaults(func=cmd_disconnect)
 
-    p_show = sub.add_parser(
-        "show",
-        help="Raw dump of a teammate's session content — no AI synthesis.",
-    )
-    p_show.add_argument("handle", help="GitHub handle of the teammate")
-    p_show.add_argument("session_id", nargs="?", default=None,
-                        help="Session ID. If omitted, lists session IDs visible to you.")
-    p_show.set_defaults(func=cmd_show)
+    sub.add_parser("shared",
+                   help="Audit which sessions are shareable + with whom.").set_defaults(func=cmd_shared)
 
+    # ── Daemon lifecycle ──
+    p_up = sub.add_parser(
+        "up",
+        help="Start the sync daemon in the background (writes PID + logs to ~/.teammate-sync/state/).",
+    )
+    p_up.set_defaults(func=cmd_up)
+
+    p_down = sub.add_parser("down", help="Stop the backgrounded sync daemon.")
+    p_down.set_defaults(func=cmd_down)
+
+    p_logs = sub.add_parser("logs", help="Tail the daemon log.")
+    p_logs.add_argument("-f", "--follow", action="store_true",
+                        help="Follow new output (like tail -f).")
+    p_logs.add_argument("-n", "--lines", type=int, default=50,
+                        help="Number of trailing lines to show (default 50).")
+    p_logs.set_defaults(func=cmd_logs)
+
+    # ── Dashboard ──
     p_dash = sub.add_parser(
         "dashboard",
         help="Launch a localhost web dashboard showing all your sessions, "
@@ -599,9 +754,10 @@ def main() -> int:
                         help="Don't automatically open the browser.")
     p_dash.set_defaults(func=cmd_dashboard)
 
+    # ── Foreground daemon (kept for `teammate-sync up` to invoke + power users) ──
     p_daemon = sub.add_parser(
         "daemon",
-        help="Run the sync daemon (foreground, leave terminal open).",
+        help="Run the sync daemon in the FOREGROUND (use `up` for background).",
     )
     p_daemon.add_argument("extra", nargs="*", help="Optional source dir overrides for testing.")
     p_daemon.set_defaults(func=cmd_daemon)

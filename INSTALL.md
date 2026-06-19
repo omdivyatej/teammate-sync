@@ -1,29 +1,23 @@
 # teammate-sync — setup
 
-Three commands, then type `/share <teammate-github-handle>` in any Claude
-Code session.
+Three commands. Then type `/connect <teammate>` in any Claude Code session.
 
 ## Prereqs
 
 - Python 3.11+ (`python3.11 --version`)
-- `pipx` (`brew install pipx && pipx ensurepath` — one-time, isolates the
-  install in its own venv and puts the binary on your PATH)
+- `pipx` (`brew install pipx && pipx ensurepath` — one-time)
 - `claude` (Claude Code CLI)
 - An Anthropic API key from https://console.anthropic.com/settings/keys
-  (you'll paste it once during `init`, it gets stored at
-  `~/.teammate-sync/auth.json`; no shell env vars needed)
+  (you'll paste it once during `init`; stored at `~/.teammate-sync/auth.json`,
+  never in your shell env)
 
-## 1. Install (~15s)
+## 1. Install
 
 ```
 pipx install teammate-sync
 ```
 
-Puts a single `teammate-sync` binary on your PATH. Every other piece of
-the system — hooks, MCP server, slash commands, daemon, dashboard —
-dispatches through it. No checkout, no virtualenv to keep around.
-
-## 2. Sign in + register (~1 min, interactive)
+## 2. Sign in (interactive)
 
 ```
 teammate-sync init
@@ -32,31 +26,30 @@ teammate-sync init
 This one command:
 1. Opens your browser to GitHub OAuth (authorize `teammate-sync`; on the
    org-access screen click **Grant** for the org you want as your workspace).
-2. Captures the access token, saves it to `~/.teammate-sync/auth.json`
-   (mode 0600).
+2. Captures the access token to `~/.teammate-sync/auth.json` (mode 0600).
 3. Asks you to pick which GitHub org is your workspace.
-4. Prompts for your Anthropic API key (stored in the same auth file).
-5. Installs all slash commands into `~/.claude/commands/`.
-6. Merges session hooks into `~/.claude/settings.json` (preserves
-   anything else already there).
+4. Prompts for your Anthropic API key.
+5. Installs the v0.3 slash commands into `~/.claude/commands/`.
+6. Merges session hooks into `~/.claude/settings.json`.
 7. Registers the MCP server with Claude Code (user scope).
 
-## 3. Start the daemon (~5s, leave running)
+## 3. Start the daemon — backgrounded
 
 ```
-teammate-sync daemon
+teammate-sync up
 ```
 
 Output:
 ```
-[sync] daemon starting
-[sync] state dir: /Users/YOU/.teammate-sync/state
-[sync] watching:  /Users/YOU/.claude/projects
-[sync] backend:   HTTPBackend(url=https://teammate-sync-backend.fly.dev, ...)
-[sync] share-mode INACTIVE — daemon idle until /share is run
+✓ daemon up (pid 12345)
+  logs:      teammate-sync logs
+  dashboard: teammate-sync dashboard
+  stop:      teammate-sync down
 ```
 
-Leave this terminal open.
+No terminal-window to babysit. The daemon detaches and runs in the
+background, logging to `~/.teammate-sync/state/daemon.log`. To stop it:
+`teammate-sync down`. To inspect: `teammate-sync logs -f`.
 
 ---
 
@@ -67,39 +60,48 @@ Restart any open Claude Code sessions so they pick up the hooks + MCP.
 **Share with a specific teammate:**
 
 ```
-/share saketh
+/connect saketh
 ```
 
-If you're not yet connected to saketh, this sends them a pending invite.
-Daemon log immediately prints `share-mode ACTIVATED → uploading`. Your
-session's content uploads with `recipients=[saketh]`.
+If you're not yet connected to saketh, this also sends them a pending
+trust request. When saketh runs `/connect om` back in their own session,
+trust is established and your shared session flows to them.
 
-**They `/accept`:**
-
-In any Claude Code session on their machine, saketh runs `/accept om`.
-From now on, your shared content flows to them automatically.
-
-**They query you:**
+**See workspace status:**
 
 ```
-Use mcp__teammate-sync__query_teammate_context with
-teammate=<your-handle> and question="..."
+/connect
 ```
 
-Or raw (no AI synthesis):
+Lists all org members and where each one stands: connected, you invited
+them, they invited you, or no relationship yet.
+
+**Query a teammate:**
 
 ```
-Use mcp__teammate-sync__dump_teammate_context with teammate=<your-handle>
+/ask saketh what did you decide about pagination?
+/ask saketh,marie what's the schema look like?
 ```
+
+`/ask` calls the MCP under the hood. Multiple comma-separated handles get
+queried in parallel and the answers presented grouped by person.
 
 **Audit:**
 
 ```
-teammate-sync dashboard
+/shared                       # in Claude Code — what's currently shareable
+teammate-sync dashboard       # browser view of everything: yours + theirs
 ```
 
-Opens a localhost web view showing your sessions + their recipients,
-sessions shared with you, pending invitations.
+**Disconnect:**
+
+```
+/disconnect saketh            # remove just saketh
+/disconnect                   # nuclear: every trust relationship, gone
+```
+
+When a Claude Code session ends, its shares auto-revoke. Trust between
+people persists until `/disconnect`.
 
 ---
 
@@ -112,20 +114,17 @@ Identity options:
 - **Same GitHub account on both** — proves the architecture works across
   machines.
 - **Different GitHub accounts in the same org** — proper two-engineer
-  flow. Use `/share <other-handle>` to test directed sharing.
+  flow.
 
 ## Uninstall
 
 ```
+teammate-sync down                        # stop the daemon
 pipx uninstall teammate-sync
 claude mcp remove teammate-sync --scope user
-rm -f ~/.claude/commands/share.md ~/.claude/commands/unshare.md \
-      ~/.claude/commands/shared.md ~/.claude/commands/connections.md \
-      ~/.claude/commands/accept.md ~/.claude/commands/decline.md \
-      ~/.claude/commands/disconnect.md ~/.claude/commands/teammates.md \
-      ~/.claude/commands/show.md
+rm -f ~/.claude/commands/connect.md ~/.claude/commands/disconnect.md \
+      ~/.claude/commands/shared.md ~/.claude/commands/ask.md
 # Edit ~/.claude/settings.json — remove the "hooks" block
-# Kill the daemon (Ctrl-C in its terminal)
 rm -rf ~/.teammate-sync
 ```
 
@@ -134,51 +133,51 @@ rm -rf ~/.teammate-sync
 | | |
 |---|---|
 | `teammate-sync init` | First-run setup. Re-runnable to refresh hooks / key / slash commands. |
-| `teammate-sync daemon` | Run the sync daemon (foreground). |
+| `teammate-sync up` | Start the daemon in the background. |
+| `teammate-sync down` | Stop the daemon. |
+| `teammate-sync logs [-f]` | Tail the daemon log. |
 | `teammate-sync dashboard` | Launch the localhost dashboard. |
-| `teammate-sync share <handle> ...` | Share this session with named teammates. |
-| `teammate-sync unshare [<sid>\|--all]` | Unshare. |
-| `teammate-sync shared` | List shared sessions and their recipients. |
-| `teammate-sync connections` | List accepted + pending connections. |
-| `teammate-sync accept <handle>` | Accept a pending invite. |
-| `teammate-sync decline <handle>` | Decline a pending invite. |
-| `teammate-sync disconnect <handle>` | Revoke trust + wipe shares. |
-| `teammate-sync show <handle> [<sid>]` | Raw dump of a teammate's session. |
+| `teammate-sync connect [<handle> ...]` | List status, or share this session. |
+| `teammate-sync disconnect [<handle>]` | Disconnect one, or all. |
+| `teammate-sync shared` | List shared sessions + recipients. |
+| `teammate-sync daemon` | Foreground daemon (rare; use `up` instead). |
 | `teammate-sync teammates` | List all members of your workspace org. |
 | `teammate-sync whoami` | Identity check. |
 | `teammate-sync logout` | Delete `~/.teammate-sync/auth.json`. |
 
 ## Troubleshooting
 
-**`teammate-sync teammates` returns 403 or empty:**
-The OAuth app needs org approval. Visit
-https://github.com/settings/connections/applications and grant
-`teammate-sync` access to your org.
+**`/connect` says "teammate not in your workspace":**
+That teammate isn't in the same GitHub org. Either add them, or both
+switch to a shared org during `init`.
+
+**Daemon won't stay running:**
+Check `teammate-sync logs` for the error. Common cause: stale auth or
+network blip during startup. `teammate-sync down && teammate-sync up`
+to bounce.
 
 **`/mcp` shows ✗ Failed to connect:**
 The MCP entry was registered with a binary that's no longer on PATH.
-Re-run `teammate-sync init` to refresh.
+Re-run `teammate-sync init`.
 
-**`/share saketh` says "saketh not in your workspace":**
-saketh must be in the same GitHub org. Either add them to your org, or
-both of you switch to a shared org during `init`.
-
-**Saketh accepts my invite but I still can't query him:**
-He needs to run `/share om` to share specific sessions with you. Connection
-trust by itself doesn't auto-share existing sessions.
+**The other person `/connect`-ed me but I still can't query them:**
+They need to `/connect <your-handle>` in a specific session for THAT
+session's content to flow. Trust alone doesn't auto-share existing
+sessions. Per-session opt-in is the privacy posture.
 
 **Daemon hangs on first call:**
-Fly backend cold start takes 5-10s. First request slow, subsequent fast.
+Fly backend cold start takes 5–10s. First request slow, subsequent fast.
 
 **Slash commands don't appear:**
 Restart Claude Code. Custom commands load at session start.
 
-## What's NOT hardcoded
+## Upgrading from v0.2
 
-- Slash commands work in any Claude Code session, any cwd
-- MCP server works in any Claude Code session
-- Hooks fire on every Claude Code session
-- The daemon watches every project on this machine
+Old slash commands `/share`, `/unshare`, `/connections`, `/accept`,
+`/decline`, `/teammates`, `/show` are retired. `teammate-sync
+install-commands` removes their `.md` files automatically. The four
+remaining commands (`/connect`, `/disconnect`, `/shared`, `/ask`) cover
+everything the old set did.
 
-Per-session, per-recipient ACL means even if you're in 5 orgs and share
-one specific session with one specific person, nothing else leaks.
+Backend doesn't change between v0.2 and v0.3 — your existing connections
+and trust relationships carry over.

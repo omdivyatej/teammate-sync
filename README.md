@@ -1,13 +1,12 @@
 # teammate-sync
 
 **Cross-engineer Claude Code context sharing.** Your teammate types
-`/share <your-handle>` in their Claude Code session. You `/accept` them.
-From your own terminal, your Claude can query theirs and get a cited
-answer (or a raw transcript dump) in seconds.
+`/connect <your-handle>` in their Claude Code session. You `/connect <their-handle>`
+back. From your own terminal, you `/ask saketh what did you decide?` and
+your Claude returns a cited answer in seconds.
 
-Directed sharing. Per-session ACL. Explicit consent. Local dashboard for
-inspection. No pasted transcripts, no GitHub pushes, no shared bucket
-setup.
+Four slash commands. Per-session, explicit. Local dashboard for inspection.
+No pasted transcripts, no GitHub pushes, no shared bucket setup.
 
 - Landing: https://omdivyatej.github.io/teammate-sync/
 - Source: https://github.com/omdivyatej/teammate-sync
@@ -36,7 +35,7 @@ raw bytes), your context stays clean.
 ```
 pipx install teammate-sync
 teammate-sync init
-teammate-sync daemon
+teammate-sync up
 ```
 
 Full walkthrough: [INSTALL.md](INSTALL.md).
@@ -44,49 +43,46 @@ Full walkthrough: [INSTALL.md](INSTALL.md).
 `init` opens GitHub OAuth (your workspace = your GitHub org), prompts for
 your Anthropic API key (used by the MCP synthesis call), installs the
 slash commands into `~/.claude/commands/`, wires session hooks, and
-registers the MCP server. `daemon` runs in the foreground in a terminal
-you leave open.
+registers the MCP server. `up` starts the sync daemon in the background —
+no terminal window to babysit. `down` to stop, `logs` to inspect.
 
-## How sharing works (v0.2 — directed share + consent)
+## How sharing works (v0.3 — four slash commands, that's the whole surface)
 
 ```
-/share saketh              share this session with saketh specifically
-                           (sends saketh a pending connection invite if
-                           you're not yet connected)
+/connect                   list workspace members + who you're connected to
+/connect saketh            share THIS session with saketh
+                           (also requests trust if you haven't connected yet —
+                           when saketh also runs /connect om, the trust links
+                           and content flows)
+/connect saketh marie      share with multiple in this session
 
-/share saketh marie        share with both at once
+/disconnect                nuke everything: every connection + local shares
+/disconnect saketh         remove just saketh
 
-/share                     share with everyone you're already connected to
+/ask saketh what did X?    query saketh's shared sessions, get a cited answer
+/ask saketh,om question    query multiple at once, grouped by handle
 
-/unshare                   unshare THIS session
-/unshare <session-id>      unshare a specific session
-/unshare --all             nuke everything
-
-/shared                    audit what you're currently sharing and with whom
-
-/connections               see all connections: accepted + pending in + out
-/accept saketh             accept a pending invite from saketh
-/decline saketh            decline a pending invite
-/disconnect saketh         revoke trust + wipe all shares between you
-
-/teammates                 list everyone in your GitHub org
-/show saketh               raw dump (no AI) of what saketh has shared with you
-/show saketh <session-id>  raw dump of one specific session
+/shared                    audit what's in your shareable pool right now
 ```
 
-When a Claude Code session ends, its share automatically revokes and the
-cloud copy is purged. Share state never outlives the conversation.
+Sharing is **per session**. Each new Claude Code session starts un-shared
+even if you're connected to teammates — you re-`/connect <handle>` in
+every session you want to share. When a session ends, its share
+auto-revokes. Trust between people persists until `/disconnect`.
 
 ## How teammates query you
 
 From any Claude Code session, your teammate types:
 
-> Use `mcp__teammate-sync__query_teammate_context` with
-> `teammate=<your-github-handle>` and `question="..."`
+```
+/ask <your-handle> <natural-language question>
+```
 
-Or, to skip the AI synthesis and read your transcript directly:
+That's it. No MCP-tool-name incantation. The slash command tells Claude
+to call the MCP under the hood and present the cited answer.
 
-> Use `mcp__teammate-sync__dump_teammate_context` with `teammate=<your-handle>`
+For raw transcript inspection (no AI synthesis), use `teammate-sync
+dashboard` to view content side-by-side in a browser.
 
 ## Local dashboard
 
@@ -98,7 +94,7 @@ Launches a localhost web view that shows side-by-side:
 
 - Your own shared sessions and who each is shared with
 - Sessions teammates have shared with you (raw transcript previewable)
-- Pending invitations (accept/decline inline)
+- Pending connection requests (with `/connect <handle>` hints)
 - Accepted connections (disconnect inline)
 
 Useful for verifying you're sharing the right session with the right
@@ -109,10 +105,13 @@ content?" without round-tripping through Claude.
 
 Default: **nothing is shared.** The daemon runs but is idle.
 
-- **Directed share, not org broadcast.** Sharing is per (session, recipient)
+- **Per-session, per-recipient.** Sharing is per (session, recipient)
   pair. Other org members can't see what you didn't share with them.
-- **Explicit consent.** Recipients must `/accept` your connection before
-  content flows. They can `/disconnect` at any time.
+- **Per-session explicit.** Every new Claude Code session starts un-shared.
+  You re-`/connect <handle>` in each session you want to share.
+- **Mutual trust.** Connection is bidirectional — A `/connect`s B, then B
+  `/connect`s A, then trust is established. After that, future content
+  flows automatically until either side `/disconnect`s.
 - **Auto-revoke.** When a Claude Code session ends, its share is wiped.
 - **GitHub OAuth token** sits in `~/.teammate-sync/auth.json` (mode 0600)
   and is **never** in the synced tree.
@@ -125,24 +124,22 @@ Default: **nothing is shared.** The daemon runs but is idle.
 | `~/.teammate-sync/auth.json` | GitHub token + Anthropic key + workspace | **NEVER** (local only) |
 | `~/.teammate-sync/state/.shared-sessions.json` | Local gate: session → recipients | No (local only) |
 | `~/.teammate-sync/state/.active-sessions.json` | Live session state (cwd, last activity) | Yes |
-| `~/.claude/projects/<encoded-cwd>/<sid>.jsonl` | Claude Code session transcripts | Only `/share`'d ones, only to named recipients |
+| `~/.claude/projects/<encoded-cwd>/<sid>.jsonl` | Claude Code session transcripts | Only `/connect`'d ones, only to named recipients |
 
 ## CLI reference
 
 | | |
 |---|---|
 | `teammate-sync init` | First-run setup. Re-runnable. |
-| `teammate-sync daemon` | Run the sync daemon (foreground). |
+| `teammate-sync up` | Start the daemon in the background. |
+| `teammate-sync down` | Stop the daemon. |
+| `teammate-sync logs [-f]` | Tail the daemon log. |
 | `teammate-sync dashboard` | Open the localhost dashboard. |
-| `teammate-sync share <handle>...` | Same as `/share`, from any shell. |
-| `teammate-sync unshare [<sid>\|--all]` | Same as `/unshare`. |
+| `teammate-sync connect [<handle> ...]` | Same as `/connect`. No args = list mode. |
+| `teammate-sync disconnect [<handle>]` | Same as `/disconnect`. No args = nuke all. |
 | `teammate-sync shared` | Same as `/shared`. |
-| `teammate-sync connections` | Same as `/connections`. |
-| `teammate-sync accept <handle>` | Same as `/accept`. |
-| `teammate-sync decline <handle>` | Same as `/decline`. |
-| `teammate-sync disconnect <handle>` | Same as `/disconnect`. |
-| `teammate-sync show <handle> [<sid>]` | Raw dump of a teammate's session. |
-| `teammate-sync teammates` | List org members. |
+| `teammate-sync daemon` | Foreground daemon (rare; use `up` instead). |
+| `teammate-sync teammates` | List org members (debugging). |
 | `teammate-sync whoami` | Show your identity + workspace. |
 | `teammate-sync logout` | Delete `~/.teammate-sync/auth.json`. |
 

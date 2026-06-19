@@ -384,9 +384,10 @@
   <section>
     <h2>What teammate-sync does</h2>
     <p>
-      Your teammate types <span class="pill">/share</span> in their session.
-      From your own terminal, your Claude can ask theirs anything and gets
-      back a cited answer in three seconds.
+      Your teammate types <span class="pill">/connect your-handle</span> in their session.
+      You type <span class="pill">/connect their-handle</span> back to establish trust, then
+      <span class="pill">/ask their-handle what did you decide?</span> from your terminal.
+      Your Claude returns a cited answer in three seconds.
     </p>
 
     <div class="terminal">
@@ -537,19 +538,22 @@
 <span class="cmt"># 2. Sign in with GitHub, wire up hooks / MCP / slash commands (~1 min)</span>
 <span class="prompt">❯</span> teammate-sync init
 
-<span class="cmt"># 3. Start the sync daemon — leave this terminal open</span>
-<span class="prompt">❯</span> teammate-sync daemon
-<span class="good">[sync] daemon starting</span>
-<span class="good">[sync] share-mode INACTIVE — daemon idle until /share is run</span>
+<span class="cmt"># 3. Start the sync daemon — backgrounded, no terminal to babysit</span>
+<span class="prompt">❯</span> teammate-sync up
+<span class="good">✓ daemon up (pid 12345)</span>
+<span class="cmt">  logs:      teammate-sync logs</span>
+<span class="cmt">  dashboard: teammate-sync dashboard</span>
+<span class="cmt">  stop:      teammate-sync down</span>
 </pre>
     </div>
 
     <p style="margin-top: 1.5rem; font-size: 0.95rem; color: var(--text-muted);">
       That's it. Restart any open Claude Code sessions so they pick up the
-      new hooks + MCP, then type <code>/share &lt;teammate-handle&gt;</code>
-      in any session. They'll get a one-time <code>/accept</code> invite
-      and your shared content starts flowing. Audit anytime with
-      <code>teammate-sync dashboard</code>. Full walkthrough:
+      new hooks + MCP, then type <code>/connect &lt;teammate-handle&gt;</code>
+      in any session. When they <code>/connect &lt;your-handle&gt;</code> back,
+      content starts flowing. Then <code>/ask &lt;handle&gt; &lt;question&gt;</code>
+      from either side. Four slash commands, that's the whole surface.
+      Audit anytime with <code>teammate-sync dashboard</code>. Full walkthrough:
       <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md">INSTALL.md</a>.
     </p>
 
@@ -626,7 +630,7 @@
       <p class="faq-q">What about privacy? My client work is sensitive.</p>
       <p class="faq-a">
         Default is nothing shared. Sessions only sync when you explicitly
-        type <code>/share</code>. Unshared sessions never leave your
+        type <code>/connect &lt;handle&gt;</code>. Unconnected sessions never leave your
         machine. When you <code>/unshare</code>, the cloud copy is wiped
         in one operation. Per-session granularity means your unrelated
         client work stays local forever.

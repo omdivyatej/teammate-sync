@@ -377,18 +377,117 @@ def cmd_decline(handle: str) -> int:
     return 0
 
 
-def cmd_disconnect(handle: str) -> int:
-    if not handle:
-        print("Usage: /disconnect <github-handle>", file=sys.stderr)
-        return 2
+def cmd_disconnect(handle: str | None) -> int:
+    """
+    Two flavors:
+      handle=None  → nuclear: disconnect from every accepted connection AND
+                     wipe local share registry entirely.
+      handle="foo" → granular: disconnect from foo only AND scrub foo from
+                     every session's recipients in the registry (dropping
+                     any session whose recipient list becomes empty).
+    """
     try:
         backend = _get_backend()
-        res = backend.disconnect_connection(handle)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    print(f"✓ Disconnected from {handle}.")
-    print(f"  Trust + per-session shares between you and {handle} removed.")
+
+    if handle:
+        try:
+            backend.disconnect_connection(handle)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        # Scrub from local share registry
+        def mod(state: dict) -> dict:
+            new = []
+            for s in state.get("sessions", []):
+                if not isinstance(s, dict):
+                    continue
+                recipients = [r for r in s.get("recipients", []) if r != handle]
+                if recipients:
+                    new.append({**s, "recipients": recipients})
+            state["sessions"] = new
+            return state
+        update_registry(mod)
+        print(f"✓ Disconnected from {handle}.")
+        print(f"  Trust + per-session shares between you and {handle} removed.")
+        return 0
+
+    # Nuclear: disconnect from everyone
+    try:
+        conns = backend.list_connections()
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    peers = [c["peer_handle"] for c in conns.get("accepted", [])]
+    if not peers:
+        # Still wipe local registry in case there are stale entries
+        update_registry(lambda s: {**s, "sessions": []})
+        print("No active connections. Local share registry cleared.")
+        return 0
+    errors = []
+    for p in peers:
+        try:
+            backend.disconnect_connection(p)
+        except Exception as e:
+            errors.append((p, str(e)))
+    update_registry(lambda s: {**s, "sessions": []})
+    print(f"✓ Disconnected from {len(peers)} teammate(s): {', '.join(peers)}")
+    print(f"  All trust + share state wiped.")
+    for p, e in errors:
+        print(f"  ⚠ partial failure for {p}: {e}", file=sys.stderr)
+    return 0
+
+
+def cmd_connect_list() -> int:
+    """List all org members with their current connection status."""
+    try:
+        backend = _get_backend()
+        conns = backend.list_connections()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    accepted = {c["peer_handle"] for c in conns.get("accepted", [])}
+    out_pending = {c["peer_handle"] for c in conns.get("pending_outgoing", [])}
+    in_pending = {c["peer_handle"] for c in conns.get("pending_incoming", [])}
+
+    # Also list org members so user can see who's available to connect with.
+    from .auth import read_auth
+    import httpx
+    auth = read_auth()
+    r = httpx.get(
+        f"{auth['backend_url'].rstrip('/')}/v1/teammates",
+        params={"org": auth["org"]},
+        headers={"Authorization": f"Bearer {auth['token']}"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        print(f"Backend rejected teammates lookup: {r.status_code}", file=sys.stderr)
+        return 1
+    members = sorted(t["github_handle"] for t in r.json().get("teammates", []))
+    my_handle = backend.teammate
+    members = [m for m in members if m != my_handle]
+
+    if not members:
+        print(f"No other members in workspace '{auth['org']}'.")
+        return 0
+
+    print(f"Workspace '{auth['org']}' — {len(members)} other member(s):")
+    print()
+    for m in members:
+        if m in accepted:
+            tag = "✓ connected"
+        elif m in in_pending:
+            tag = "← they invited you  (run /connect to share back)"
+        elif m in out_pending:
+            tag = "→ you invited them, awaiting their /connect"
+        else:
+            tag = "  (run /connect " + m + " to share this session)"
+        print(f"  {m:<20}  {tag}")
+    print()
+    print("To share this session with someone:  /connect <handle> [<handle> ...]")
     return 0
 
 
