@@ -586,18 +586,18 @@
       <div class="step">
         <div class="step-num">2</div>
         <div>
-          <h3>Run the daemon</h3>
-          <p>A tiny background process watches your workspace. Nothing leaves your machine until you explicitly opt in.</p>
-          <code>teammate-sync daemon</code>
+          <h3>Start the daemon — backgrounded</h3>
+          <p>A tiny background process watches your workspace. Nothing leaves your machine until you explicitly opt in. No terminal to babysit.</p>
+          <code>teammate-sync up</code>
         </div>
       </div>
 
       <div class="step">
         <div class="step-num">3</div>
         <div>
-          <h3>Share a session</h3>
-          <p>In any Claude Code session, type the slash command. Your CLAUDE.md and that session's transcript become queryable by your org. Other sessions stay completely private.</p>
-          <code>/share</code>
+          <h3>Connect with a teammate</h3>
+          <p>In any Claude Code session, name who you want to share with. They <code>/connect</code> back; trust links and only that session's content flows. Sessions you don't connect on never leave your machine.</p>
+          <code>/connect saketh</code>
         </div>
       </div>
 
@@ -605,8 +605,8 @@
         <div class="step-num">4</div>
         <div>
           <h3>Your teammates query you</h3>
-          <p>Their Claude calls your context with natural language. Gets back a cited synthesis in seconds. You are never interrupted. Their context window never bloats.</p>
-          <code>Use teammate-sync, what did X decide about Y?</code>
+          <p>They type <code>/ask &lt;your-handle&gt; &lt;question&gt;</code>. Their Claude returns a cited synthesis in seconds. You are never interrupted. Their context window never bloats.</p>
+          <code>/ask om what did you decide about X?</code>
         </div>
       </div>
     </div>
