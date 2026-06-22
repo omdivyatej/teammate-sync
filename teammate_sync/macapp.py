@@ -68,7 +68,9 @@ SHARED_FILE = STATE_DIR / ".shared-sessions.json"
 LAUNCHAGENT_PATH = Path("~/Library/LaunchAgents/com.teammate-sync.app.plist").expanduser()
 LAUNCHAGENT_LABEL = "com.teammate-sync.app"
 
-POLL_SECONDS = 5.0
+POLL_SECONDS = 5.0          # local state poll (pid/shared count)
+NOTIFY_POLL_SECONDS = 30.0  # backend poll for new connection events
+NOTIFY_PREFS_FILE = STATE_DIR / ".notify-prefs.json"
 
 
 def _binary() -> str:
@@ -162,6 +164,91 @@ def _open_terminal_running(command: str) -> None:
     subprocess.Popen(["osascript", "-e", 'tell application "Terminal" to activate'])
 
 
+# ──── notifications ────────────────────────────────────────────────────────
+
+def _notify(title: str, subtitle: str, message: str) -> None:
+    """
+    Fire a macOS notification.
+
+    Prefers `terminal-notifier` if installed (cleaner branding, can set
+    custom sender bundle id). Falls back to `osascript` AppleScript
+    `display notification` which works on every Mac out of the box but
+    shows "Script Editor" as the source — mildly weird, functionally fine.
+
+    Either path: macOS will prompt the user once to allow notifications
+    for the source app, then remembers the decision.
+    """
+    if shutil.which("terminal-notifier"):
+        subprocess.Popen(
+            [
+                "terminal-notifier",
+                "-title", title,
+                "-subtitle", subtitle,
+                "-message", message,
+                "-group", LAUNCHAGENT_LABEL,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = (
+        f'display notification "{esc(message)}" '
+        f'with title "{esc(title)}" '
+        f'subtitle "{esc(subtitle)}"'
+    )
+    subprocess.Popen(
+        ["osascript", "-e", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _read_notify_prefs() -> dict:
+    if not NOTIFY_PREFS_FILE.exists():
+        return {"enabled": True}
+    try:
+        return json.loads(NOTIFY_PREFS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {"enabled": True}
+
+
+def _write_notify_prefs(prefs: dict) -> None:
+    NOTIFY_PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NOTIFY_PREFS_FILE.write_text(json.dumps(prefs, indent=2))
+
+
+def _fetch_connections() -> dict | None:
+    """
+    Hit /v1/connections on the backend. Returns the JSON dict, or None if
+    not configured / network failed / backend rejected.
+    """
+    try:
+        import httpx
+        from .auth import read_auth
+    except (ImportError, ModuleNotFoundError):
+        return None
+    try:
+        auth = read_auth()
+    except (FileNotFoundError, ValueError):
+        return None
+    try:
+        r = httpx.get(
+            f"{auth['backend_url'].rstrip('/')}/v1/connections",
+            params={"org": auth["org"]},
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=5.0,
+        )
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+
 def _launchagent_plist() -> str:
     """Render the LaunchAgent plist content for auto-start at login."""
     binary = _binary()
@@ -211,6 +298,9 @@ class TeammateSyncApp(rumps.App):
         self.uninstall_la_item = rumps.MenuItem(
             "Remove auto-start", callback=self.on_uninstall_launchagent
         )
+        self.notify_item = rumps.MenuItem(
+            "Notifications: on", callback=self.on_toggle_notifications
+        )
         self.quit_item = rumps.MenuItem("Quit teammate-sync app", callback=self.on_quit)
 
         self.menu = [
@@ -226,13 +316,25 @@ class TeammateSyncApp(rumps.App):
             self.install_la_item,
             self.uninstall_la_item,
             None,
+            self.notify_item,
             self.quit_item,
         ]
+
+        # Notification state — track previous backend connection snapshot
+        # so we only notify about NEW events (not pre-existing ones).
+        self._last_pending_in: set[str] | None = None
+        self._last_accepted: set[str] | None = None
+        prefs = _read_notify_prefs()
+        self._notifications_enabled = bool(prefs.get("enabled", True))
+        self._refresh_notify_label()
 
         # Initial poll + recurring poll
         self._poll()
         self.poll_timer = rumps.Timer(self._on_tick, POLL_SECONDS)
         self.poll_timer.start()
+        # Backend connection poll on its own (slower) cadence
+        self.notify_timer = rumps.Timer(self._on_notify_tick, NOTIFY_POLL_SECONDS)
+        self.notify_timer.start()
 
     # ──── status polling ────────────────────────────────────────────────
 
@@ -333,8 +435,65 @@ class TeammateSyncApp(rumps.App):
             )
         self._poll()
 
+    def on_toggle_notifications(self, _: object) -> None:
+        self._notifications_enabled = not self._notifications_enabled
+        _write_notify_prefs({"enabled": self._notifications_enabled})
+        self._refresh_notify_label()
+        if self._notifications_enabled:
+            _notify(
+                title="teammate-sync",
+                subtitle="Notifications enabled",
+                message="You'll see a pop-up when a teammate wants to connect or accepts your invite.",
+            )
+
+    def _refresh_notify_label(self) -> None:
+        self.notify_item.title = (
+            "Notifications: on" if self._notifications_enabled else "Notifications: off"
+        )
+
     def on_quit(self, _: object) -> None:
         rumps.quit_application()
+
+    # ──── backend polling for connection events ─────────────────────────
+
+    def _on_notify_tick(self, _: object) -> None:
+        threading.Thread(target=self._poll_connections, daemon=True).start()
+
+    def _poll_connections(self) -> None:
+        """
+        Fetch /v1/connections, diff against previous snapshot, fire
+        notifications on:
+          - new pending_incoming entries (someone wants to connect with you)
+          - new accepted entries (a /connect you sent got accepted)
+
+        First poll just records the baseline — we don't fire notifications
+        for pre-existing state when the app boots, to avoid spam after a
+        restart with old pending invites.
+        """
+        data = _fetch_connections()
+        if data is None:
+            return
+
+        pending_in = {c["peer_handle"] for c in data.get("pending_incoming", [])}
+        accepted = {c["peer_handle"] for c in data.get("accepted", [])}
+
+        if self._last_pending_in is not None and self._notifications_enabled:
+            for handle in sorted(pending_in - self._last_pending_in):
+                _notify(
+                    title="teammate-sync",
+                    subtitle="Connection request",
+                    message=f"{handle} wants to connect. In Claude Code, run /connect {handle} to share back.",
+                )
+            if self._last_accepted is not None:
+                for handle in sorted(accepted - self._last_accepted):
+                    _notify(
+                        title="teammate-sync",
+                        subtitle="Connection accepted",
+                        message=f"{handle} accepted your invite. Their context is now visible to you via /ask.",
+                    )
+
+        self._last_pending_in = pending_in
+        self._last_accepted = accepted
 
 
 def run() -> int:
