@@ -1,760 +1,454 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CodeBaton — pass the baton on your code</title>
-  <meta name="description" content="One engineer's Claude Code context, queryable by another engineer's Claude. No pasted transcripts, no GitHub pushes, no shared bucket. One command per session.">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeBaton — pass the baton on your code</title>
+<meta name="description" content="Query a teammate's live Claude Code session — running locally on their own laptop — and get a cited answer in seconds. No pasted transcripts, no cloud setup, no interruptions.">
+<meta property="og:title" content="CodeBaton — pass the baton on your code">
+<meta property="og:description" content="Ask a teammate's Claude what they're building, right now, mid-session. Cited answers in seconds.">
+<meta property="og:type" content="website">
 
-  <meta property="og:title" content="CodeBaton — pass the baton on your code">
-  <meta property="og:description" content="Your team's Claude Code, shared. One command per session, no pasted transcripts.">
-  <meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg:        #0c0c0f;
+    --bg-1:      #131318;
+    --bg-2:      #1a1a21;
+    --line:      #24242d;
+    --line-2:    #33333f;
+    --ink:       #f5f5f7;
+    --ink-dim:   #a3a3ae;
+    --ink-mute:  #6c6c79;
+    --lime:      #c6f23f;
+    --lime-deep: #a4d62a;
+    --cobalt:    #5470ff;
+    --cobalt-soft: rgba(84,112,255,0.14);
+    --sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --maxw: 1120px;
+    --read: 680px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--sans); font-size: 17px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(198,242,63,0.25); }
+  a { color: inherit; text-decoration: none; }
 
-  <style>
-    :root {
-      --bg: #0e0e11;
-      --bg-elev: #16161b;
-      --bg-card: #1c1c23;
-      --border: #262630;
-      --text: #f4f4f7;
-      --text-dim: #a2a2ad;
-      --text-muted: #6c6c79;
-      --accent: #c6f23f;
-      --accent-dim: #93c521;
-      --blue: #4263ff;
-      --user-color: #7e96ff;
-      --assistant-color: #c6f23f;
-    }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
+  .read { max-width: var(--read); }
 
-    * { box-sizing: border-box; }
+  /* eyebrow motif: // label */
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; font-weight: 500;
+    color: var(--ink-mute); letter-spacing: 0.02em;
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px;
+  }
+  .eyebrow::before { content: "//"; color: var(--lime); font-weight: 600; }
 
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 16px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
+  /* ── NAV ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(12,12,15,0.72); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; height: 62px; gap: 22px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+  .brand b { color: var(--lime); font-weight: 600; }
+  .brand svg { width: 24px; height: 24px; }
+  nav .spacer { flex: 1; }
+  nav .nlink { color: var(--ink-dim); font-size: 15px; }
+  nav .nlink:hover { color: var(--ink); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--sans); font-weight: 600; font-size: 15px;
+    padding: 10px 18px; border-radius: 10px; cursor: pointer;
+    border: 1px solid transparent; transition: transform .12s ease, background .15s, border-color .15s, color .15s;
+    white-space: nowrap;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-lime { background: var(--lime); color: #0b0d05; }
+  .btn-lime:hover { background: #d4ff5c; }
+  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-2); }
+  .btn-ghost:hover { background: var(--bg-1); border-color: var(--ink-mute); }
+  .btn-sm { padding: 8px 14px; font-size: 14px; border-radius: 9px; }
 
-    .container {
-      max-width: 760px;
-      margin: 0 auto;
-      padding: 0 1.5rem;
-    }
+  /* ── HERO ── */
+  .hero { padding: clamp(48px, 9vw, 110px) 0 clamp(40px, 6vw, 72px); }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 54px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 38px; } }
+  h1 {
+    font-size: clamp(2.6rem, 6vw, 4.4rem); line-height: 1.02;
+    letter-spacing: -0.035em; font-weight: 700;
+  }
+  h1 .lime { color: var(--lime); }
+  .lead {
+    font-size: clamp(1.05rem, 1.7vw, 1.28rem); color: var(--ink-dim);
+    margin-top: 26px; max-width: 36ch;
+  }
+  .hero-cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px; }
+  .hero-note { margin-top: 16px; font-family: var(--mono); font-size: 13px; color: var(--ink-mute); }
+  .hero-note a { color: var(--ink-dim); text-decoration: underline; text-underline-offset: 3px; }
 
-    nav {
-      padding: 1.5rem 0;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 4rem;
-    }
-    nav .brand {
-      font-family: 'JetBrains Mono', monospace;
-      font-weight: 600;
-      font-size: 1rem;
-      color: var(--text);
-      text-decoration: none;
-    }
-    nav a.gh {
-      color: var(--text-dim);
-      text-decoration: none;
-      font-size: 0.9rem;
-    }
-    nav a.gh:hover { color: var(--text); }
+  .reveal { opacity: 0; transform: translateY(14px); animation: rise .7s cubic-bezier(.2,.7,.2,1) forwards; }
+  .d1 { animation-delay: .04s; } .d2 { animation-delay: .12s; } .d3 { animation-delay: .2s; }
+  .d4 { animation-delay: .28s; } .d5 { animation-delay: .36s; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .reveal { animation: none; opacity: 1; transform: none; } .cursor { animation: none; } }
 
-    section { margin: 5rem 0; }
+  /* ── terminal component ── */
+  .term {
+    background: linear-gradient(180deg, #101015, #0b0b0f);
+    border: 1px solid var(--line); border-radius: 14px;
+    font-family: var(--mono); font-size: 14px; line-height: 1.75;
+    box-shadow: 0 30px 80px -40px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.02) inset;
+    overflow: hidden;
+  }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2c2c36; display: inline-block; }
+  .term-bar .t { margin-left: 10px; color: var(--ink-mute); font-size: 12.5px; }
+  .term-body { padding: 18px 18px 20px; white-space: pre-wrap; color: var(--ink-dim); }
+  .term .pr { color: var(--lime); }
+  .term .cmd { color: var(--ink); }
+  .term .usr { color: var(--cobalt); }
+  .term .dim { color: var(--ink-mute); }
+  .term .out { color: #e7e7ec; }
+  .term .cite { color: var(--lime-deep); }
+  .term .bad { color: #ff8585; }
+  .cursor { display: inline-block; width: 8px; height: 16px; background: var(--lime); vertical-align: -2px; margin-left: 2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
 
-    h1 {
-      font-size: clamp(2rem, 5vw, 3rem);
-      line-height: 1.15;
-      letter-spacing: -0.02em;
-      margin: 0 0 1.25rem;
-      font-weight: 700;
-    }
-    h1 .accent { color: var(--accent); }
+  /* ── sections ── */
+  section { padding: clamp(56px, 9vw, 104px) 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(1.7rem, 3.2vw, 2.4rem); letter-spacing: -0.025em; font-weight: 700; line-height: 1.1; }
+  .sec-lead { color: var(--ink-dim); margin-top: 16px; font-size: 1.08rem; }
+  p + p { margin-top: 1rem; }
+  .muted { color: var(--ink-dim); }
+  strong { color: var(--ink); font-weight: 600; }
 
-    h2 {
-      font-size: 1.65rem;
-      letter-spacing: -0.01em;
-      margin: 0 0 1.25rem;
-      font-weight: 600;
-    }
-    h2::before {
-      content: "## ";
-      color: var(--text-muted);
-      font-family: 'JetBrains Mono', monospace;
-      font-weight: 400;
-    }
+  /* problem: two bad options */
+  .options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 34px; }
+  @media (max-width: 760px) { .options { grid-template-columns: 1fr; } }
+  .opt { background: var(--bg-1); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; }
+  .opt .n { font-family: var(--mono); font-size: 13px; color: var(--ink-mute); }
+  .opt h3 { font-size: 1.15rem; margin: 8px 0 8px; font-weight: 600; letter-spacing: -0.01em; }
+  .opt p { color: var(--ink-dim); font-size: 0.98rem; }
 
-    h3 {
-      font-size: 1.1rem;
-      margin: 1.75rem 0 0.75rem;
-      font-weight: 600;
-      color: var(--text);
-    }
+  /* why-not list */
+  .reasons { margin-top: 36px; display: grid; gap: 2px; }
+  .reason { display: grid; grid-template-columns: 40px 1fr; gap: 18px; padding: 24px 0; border-top: 1px solid var(--line); align-items: start; }
+  .reason:first-child { border-top: none; }
+  .reason .ix { font-family: var(--mono); font-size: 15px; color: var(--lime); padding-top: 2px; }
+  .reason h3 { font-size: 1.18rem; font-weight: 600; letter-spacing: -0.01em; }
+  .reason p { color: var(--ink-dim); margin-top: 7px; font-size: 1rem; }
+  .kicker { margin-top: 40px; font-size: 1.22rem; line-height: 1.5; max-width: 30ch; }
+  .kicker .lime { color: var(--lime); }
 
-    p {
-      color: var(--text-dim);
-      margin: 0 0 1rem;
-    }
-    p strong { color: var(--text); font-weight: 600; }
-    .lead {
-      font-size: 1.2rem;
-      color: var(--text);
-      margin-bottom: 2rem;
-    }
+  /* commands */
+  .cmds { margin-top: 34px; display: grid; gap: 10px; }
+  .cmd-row { display: grid; grid-template-columns: minmax(0,300px) 1fr; gap: 22px; align-items: baseline;
+             padding: 18px 0; border-top: 1px solid var(--line); }
+  .cmd-row:first-child { border-top: none; }
+  @media (max-width: 680px) { .cmd-row { grid-template-columns: 1fr; gap: 6px; } }
+  .cmd-row code { font-family: var(--mono); font-size: 0.96rem; color: var(--lime); }
+  .cmd-row code .arg { color: var(--cobalt); }
+  .cmd-row .desc { color: var(--ink-dim); font-size: 1rem; }
 
-    a { color: var(--accent); }
-    a:hover { color: #e0ff7d; }
+  /* install two-track */
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+  @media (max-width: 760px) { .tracks { grid-template-columns: 1fr; } }
+  .track { background: var(--bg-1); border: 1px solid var(--line); border-radius: 16px; padding: 26px; display: flex; flex-direction: column; }
+  .tag { align-self: flex-start; font-family: var(--mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em;
+         padding: 4px 9px; border-radius: 6px; margin-bottom: 14px; }
+  .tag.lime { background: rgba(198,242,63,0.13); color: var(--lime); border: 1px solid rgba(198,242,63,0.3); }
+  .tag.blue { background: var(--cobalt-soft); color: #93a6ff; border: 1px solid rgba(84,112,255,0.34); }
+  .track h3 { font-size: 1.3rem; letter-spacing: -0.015em; }
+  .track p { color: var(--ink-dim); font-size: 0.98rem; margin: 8px 0 18px; }
+  .track .term { font-size: 13px; }
+  .track .fine { margin-top: 14px; font-size: 0.82rem; color: var(--ink-mute); }
+  .track .fine a { color: var(--ink-dim); text-decoration: underline; text-underline-offset: 2px; }
+  .track .grow { flex: 1; }
 
-    .cta {
-      display: flex;
-      gap: 1rem;
-      flex-wrap: wrap;
-      margin-top: 2rem;
-    }
-    .btn {
-      display: inline-block;
-      padding: 0.85rem 1.5rem;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.95rem;
-      text-decoration: none;
-      transition: transform 0.1s ease, background 0.15s ease;
-    }
-    .btn:hover { transform: translateY(-1px); }
-    .btn-primary {
-      background: var(--accent);
-      color: #0b0b0e;
-    }
-    .btn-primary:hover { background: #e0ff7d; color: #0b0b0e; }
-    .btn-secondary {
-      background: transparent;
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .btn-secondary:hover {
-      background: var(--bg-elev);
-      color: var(--text);
-    }
+  /* faq */
+  .faq { margin-top: 30px; }
+  .qa { border-top: 1px solid var(--line); padding: 26px 0; display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 28px; }
+  .qa:last-child { border-bottom: 1px solid var(--line); }
+  @media (max-width: 760px) { .qa { grid-template-columns: 1fr; gap: 8px; } }
+  .qa .q { font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }
+  .qa .a { color: var(--ink-dim); font-size: 1rem; }
+  .qa .a code { font-family: var(--mono); font-size: 0.86em; background: var(--bg-2); padding: 1px 6px; border-radius: 5px; color: var(--lime); }
 
-    /* Terminal blocks — show the before/after demo */
-    .terminal {
-      background: #0a0a0c;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.25rem 1.5rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.85rem;
-      line-height: 1.7;
-      overflow-x: auto;
-      margin: 1.5rem 0;
-    }
-    .terminal .title-bar {
-      display: flex;
-      gap: 0.45rem;
-      margin: -0.25rem -0.5rem 1rem;
-      align-items: center;
-    }
-    .terminal .dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: #3a3a42;
-    }
-    .terminal .label {
-      margin-left: auto;
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      font-family: 'Inter', sans-serif;
-    }
-    .terminal pre {
-      margin: 0;
-      white-space: pre-wrap;
-      color: var(--text-dim);
-    }
-    .terminal .prompt { color: var(--accent); }
-    .terminal .user { color: var(--user-color); }
-    .terminal .out { color: var(--text); }
-    .terminal .cmt { color: var(--text-muted); font-style: italic; }
-    .terminal .bad { color: #ff7a7a; }
-    .terminal .good { color: var(--accent); }
+  /* final cta */
+  .final { text-align: center; }
+  .final h2 { font-size: clamp(2rem, 4.5vw, 3rem); }
+  .final .lead { margin: 18px auto 0; max-width: 44ch; }
+  .final .hero-cta { justify-content: center; }
 
-    /* How-it-works steps */
-    .steps {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1.25rem;
-      margin-top: 2rem;
-    }
-    .step {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.25rem 1.5rem;
-      display: grid;
-      grid-template-columns: 2.5rem 1fr;
-      gap: 1rem;
-      align-items: start;
-    }
-    .step-num {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 1.2rem;
-      font-weight: 700;
-      color: var(--accent);
-    }
-    .step h3 { margin: 0 0 0.35rem; }
-    .step p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
-    .step code {
-      display: inline-block;
-      margin-top: 0.5rem;
-      background: #0a0a0c;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.4rem 0.65rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.82rem;
-      color: var(--text);
-    }
-
-    /* Install — two tracks */
-    .install-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-top: 1.5rem;
-    }
-    @media (max-width: 640px) { .install-grid { grid-template-columns: 1fr; } }
-    .track {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.4rem 1.5rem;
-      display: flex;
-      flex-direction: column;
-    }
-    .track h3 { font-size: 1.15rem; }
-    .track p { color: var(--text-dim); }
-    .track .btn { align-self: flex-start; }
-    .track-tag {
-      display: inline-block;
-      align-self: flex-start;
-      font-size: 0.7rem;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 0.2rem 0.6rem;
-      border-radius: 5px;
-      background: rgba(198,242,63,0.13);
-      color: var(--accent);
-      border: 1px solid rgba(198,242,63,0.3);
-    }
-    .track-tag.alt {
-      background: rgba(66,99,255,0.14);
-      color: var(--user-color);
-      border-color: rgba(66,99,255,0.35);
-    }
-    .track .terminal { font-size: 0.8rem; }
-
-    /* FAQ */
-    .faq-item {
-      border-top: 1px solid var(--border);
-      padding: 1.5rem 0;
-    }
-    .faq-item:last-child { border-bottom: 1px solid var(--border); }
-    .faq-q {
-      font-weight: 600;
-      color: var(--text);
-      margin: 0 0 0.5rem;
-      font-size: 1.05rem;
-    }
-    .faq-a { color: var(--text-dim); margin: 0; }
-    .faq-a code {
-      background: var(--bg-elev);
-      padding: 0.1rem 0.35rem;
-      border-radius: 4px;
-      font-size: 0.85em;
-    }
-
-    /* Pricing card */
-    .pricing-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 2rem;
-      margin: 1.5rem 0;
-    }
-    .pricing-card .badge {
-      display: inline-block;
-      background: var(--accent);
-      color: #0b0b0e;
-      padding: 0.2rem 0.6rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      margin-bottom: 0.75rem;
-    }
-    .pricing-card h3 { margin: 0 0 0.5rem; font-size: 1.4rem; }
-    .pricing-card .price {
-      font-size: 1.5rem;
-      color: var(--text);
-      font-weight: 600;
-      margin: 0.5rem 0;
-    }
-    .pricing-card ul { list-style: none; padding: 0; margin: 1rem 0 0; }
-    .pricing-card li {
-      color: var(--text-dim);
-      padding: 0.3rem 0;
-      font-size: 0.95rem;
-    }
-    .pricing-card li::before {
-      content: "✓  ";
-      color: var(--accent);
-      font-weight: 600;
-    }
-
-    /* Footer */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 2.5rem 0 3.5rem;
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 1rem;
-    }
-    footer a { color: var(--text-dim); text-decoration: none; }
-    footer a:hover { color: var(--text); }
-
-    /* Inline highlights */
-    .pill {
-      display: inline-block;
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.85em;
-      color: var(--text);
-    }
-
-    @media (max-width: 600px) {
-      section { margin: 3.5rem 0; }
-      h2 { font-size: 1.4rem; }
-      .terminal { font-size: 0.78rem; padding: 1rem 1.1rem; }
-      .step { grid-template-columns: 2rem 1fr; gap: 0.75rem; }
-    }
-  </style>
+  footer { border-top: 1px solid var(--line); padding: 34px 0; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; color: var(--ink-mute); font-size: 14px; }
+  footer a { color: var(--ink-dim); }
+  footer a:hover { color: var(--ink); }
+  footer .spacer { flex: 1; }
+</style>
 </head>
 <body>
 
-<div class="container">
+<!-- mark, reused -->
+<svg style="display:none"><symbol id="mark" viewBox="0 0 44 44">
+  <line x1="13" y1="32" x2="23" y2="13" stroke="#5470ff" stroke-width="6.5" stroke-linecap="round"/>
+  <line x1="23" y1="31" x2="33" y2="12" stroke="#c6f23f" stroke-width="6.5" stroke-linecap="round"/>
+  <circle cx="33" cy="12" r="3.4" fill="#f4ffd6"/>
+</symbol></svg>
 
-  <nav>
-    <a href="#" class="brand" style="display:inline-flex;align-items:center;gap:9px;text-decoration:none;">
-      <svg width="22" height="22" viewBox="0 0 44 44" fill="none" style="flex:none;">
-        <line x1="13" y1="32" x2="23" y2="13" stroke="#4263ff" stroke-width="6.5" stroke-linecap="round"/>
-        <line x1="23" y1="31" x2="33" y2="12" stroke="#c6f23f" stroke-width="6.5" stroke-linecap="round"/>
-        <circle cx="33" cy="12" r="3.4" fill="#f4ffd6"/>
-      </svg>
-      <span>Code<span style="color:var(--accent)">Baton</span></span>
-    </a>
-    <a href="https://github.com/omdivyatej/teammate-sync" class="gh">github →</a>
-  </nav>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><svg><use href="#mark"/></svg> Code<b>Baton</b></a>
+    <span class="spacer"></span>
+    <a class="nlink" href="#how">How it works</a>
+    <a class="nlink" href="https://github.com/omdivyatej/teammate-sync">GitHub</a>
+    <a class="btn btn-lime btn-sm" href="#install">Download</a>
+  </div>
+</nav>
 
-  <!-- HERO -->
-  <section style="margin-top: 0;">
-    <h1>Pass the <span class="accent">baton</span> on your code.</h1>
-    <p class="lead">
-      Query a teammate's live Claude Code session — running locally on their
-      own laptop, no cloud setup — and get a cited answer in seconds: what
-      they're building, what they decided, what they ruled out. They never get
-      interrupted. Your context window never bloats.
-    </p>
-    <div class="cta">
-      <a href="#install" class="btn btn-primary">Install now</a>
-      <a href="#access" class="btn btn-secondary">Request beta access</a>
-      <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">View on GitHub</a>
-    </div>
-    <p style="margin-top: 0.6rem; font-size: 0.9rem; color: var(--text-muted);">
-      Live on PyPI:
-      <a href="https://pypi.org/project/teammate-sync/" style="color: var(--text-muted);"><code>pipx install teammate-sync</code></a>
-    </p>
-  </section>
-
-  <!-- PROBLEM -->
-  <section>
-    <h2>The problem</h2>
-    <p>
-      You and your teammate are both using Claude Code on the same project.
-      You need to know what they decided about the database schema, or which
-      file they touched, or why they picked one library over another.
-    </p>
-    <p>Today you have two bad options:</p>
-
-    <div class="terminal">
-      <div class="title-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">today, without CodeBaton</span>
-      </div>
-<pre>
-<span class="cmt"># Option 1: ping them on Slack and wait</span>
-<span class="user">You:</span>     hey saketh whats the pagination approach for Account?
-<span class="user">Saketh:</span>  brb in a meeting, will get back in an hour
-<span class="bad">(45 minutes later)</span>
-
-<span class="cmt"># Option 2: get them to send their session transcript</span>
-<span class="user">Saketh:</span>  here's my whole .jsonl, 50k lines, good luck
-<span class="user">You:</span>     <span class="cmt">*pastes into Claude*</span>
-<span class="bad">Claude:</span>  context window: 200,000 tokens used. session degraded.
-</pre>
-    </div>
-  </section>
-
-  <!-- SOLUTION -->
-  <section>
-    <h2>What CodeBaton does</h2>
-    <p>
-      Your teammate types <span class="pill">/connect your-handle</span> in their session.
-      You type <span class="pill">/connect their-handle</span> back to establish trust, then
-      <span class="pill">/ask their-handle what did you decide?</span> from your terminal.
-      Your Claude returns a cited answer in three seconds.
-    </p>
-
-    <div class="terminal">
-      <div class="title-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">with CodeBaton</span>
-      </div>
-<pre>
-<span class="prompt">❯</span> <span class="user">Ask CodeBaton: what did Saketh decide about pagination for
-   Account, and why?</span>
-
-<span class="cmt">Called CodeBaton (3.1s)</span>
-
-<span class="good">Claude:</span>
-  Cursor-based on Id, NOT offset.
-  Reason: 2.4 million rows with concurrent writes from the integration
-  user made offset pagination produce inconsistent results — rows would
-  skip or double-process. Cursor pagination on Id gives deterministic
-  ordering. Same pattern recommended for Contact lookups.
-
-  <span class="cmt">Cited: saketh/CLAUDE.md, session abc-123 (yesterday 2:14pm)
-  Context cost: ~500 tokens. Saketh was not interrupted.</span>
-</pre>
-    </div>
-
-    <p style="margin-top: 1.5rem;">
-      That is the whole experience. Everything else on this page is the
-      engineering that makes it actually work.
-    </p>
-  </section>
-
-  <!-- WHY NOT GITHUB -->
-  <section>
-    <h2>"Why not just push to GitHub?"</h2>
-    <p>
-      This is the first question every engineer asks. Here is the honest
-      answer with a concrete example.
-    </p>
-
-    <h3 style="margin-top: 2rem;">A real scenario</h3>
-    <p>
-      Saketh is debugging a recursive trigger problem on a Salesforce
-      migration. He has been at it for 90 minutes. <strong>He has not pushed
-      anything to GitHub yet.</strong> Engineers do not push mid-debugging.
-      The work is not done. The commit message would be misleading. The
-      branch would break review.
-    </p>
-    <p>
-      Om hits the same problem 30 minutes later on a different object. He
-      needs to know if Saketh figured it out.
-    </p>
-
-    <p style="margin-top: 1.5rem;"><strong>Without CodeBaton, here is what Om can read from GitHub: nothing.</strong> Saketh has not pushed. Om's choices are:</p>
-    <ul style="color: var(--text-dim); margin-bottom: 1.5rem;">
-      <li>Ping Saketh on Slack and interrupt his flow.</li>
-      <li>Wait until tomorrow when the PR lands and read the sanitized commit message.</li>
-      <li>Try to reverse-engineer the problem from scratch.</li>
-    </ul>
-
-    <p><strong>With CodeBaton, Om types in his Claude:</strong></p>
-
-    <div class="terminal">
-      <div class="title-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">Om's terminal, 11:32am</span>
-      </div>
-<pre>
-<span class="prompt">❯</span> <span class="user">What is Saketh seeing about the recursive trigger right now?</span>
-
-<span class="cmt">Called CodeBaton (3.2s)</span>
-
-<span class="good">Claude:</span>
-  Saketh's most recent message in his session, 94 seconds ago in
-  cwd /Users/saketh/penguin: he found that the Account_History
-  trigger fires on every migration insert, creating a feedback
-  loop. He disabled it before the run with this SOQL:
-
-    UPDATE TriggerHandler__c SET Active__c = false
-    WHERE Object__c = 'Account_History__c';
-
-  Same pattern is likely on Contact_History__c. Expect to disable
-  yours before your Contact migration too.
-
-  <span class="cmt">Cited: saketh's live session, last message 94s ago.
-  Not in GitHub — Saketh has not committed yet.</span>
-</pre>
-    </div>
-
-    <p style="margin-top: 1.5rem;">
-      This is reasoning Saketh has not committed, not documented, not
-      mentioned in Slack. It exists only in his live Claude session, right
-      now. CodeBaton surfaces it the moment Om asks.
-    </p>
-
-    <h3 style="margin-top: 2.5rem;">The three deeper reasons behind this example</h3>
-
-    <p>
-      <strong>1. Most reasoning never reaches a commit.</strong>
-      Engineers iterate dozens of times for every commit. The dead ends,
-      the experiments, the "wait let me try X" moments — that is where the
-      actual knowledge lives. Git ignores all of it.
-    </p>
-
-    <p>
-      <strong>2. Commits show the decision, not the reasoning.</strong>
-      "Use cursor pagination" is a one-line commit. The 90 minutes of
-      figuring out why offset failed first is what your teammate actually
-      needs when they hit the same fork in the road.
-    </p>
-
-    <p>
-      <strong>3. PR-reviewed code is sanitized.</strong>
-      By the time something lands in main, the messy real reasoning has
-      been edited out for "code quality." The questions, the alternatives
-      considered, the bug that was almost shipped — gone. Your teammate
-      will hit those exact same questions next week with no record they
-      were ever asked.
-    </p>
-
-    <p style="margin-top: 1.75rem;">
-      <strong>The one-line version:</strong> GitHub captures the finished
-      work that survives review. CodeBaton captures the live reasoning
-      that produced it — including the parts your teammate is figuring out
-      right now, this second.
-    </p>
-  </section>
-
-  <!-- INSTALL -->
-  <section id="install">
-    <h2>Install</h2>
-    <p>Two ways in. Pick your lane.</p>
-
-    <div class="install-grid">
-      <!-- Track 1: desktop app -->
-      <div class="track">
-        <div class="track-tag">For everyone</div>
-        <h3 style="margin-top:0.4rem;">Desktop app</h3>
-        <p style="font-size:0.92rem;">
-          Download, drag to Applications, sign in. The app runs sync in the
-          background and gives you a dashboard. Bundles everything — no Python,
-          no terminal.
-        </p>
-        <a href="https://github.com/omdivyatej/teammate-sync/releases/download/desktop-v0.6.0/CodeBaton-0.6.0-arm64.dmg"
-           class="btn btn-primary" style="margin-top:0.5rem;">Download for Mac ↓</a>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;">
-          Apple Silicon · beta · unsigned (right-click → Open). Intel + Windows soon.
-        </p>
-      </div>
-
-      <!-- Track 2: CLI / pipx -->
-      <div class="track">
-        <div class="track-tag alt">For terminal-first devs</div>
-        <h3 style="margin-top:0.4rem;">CLI</h3>
-        <p style="font-size:0.92rem;">
-          Live in the terminal? Skip the GUI entirely. One package, a few
-          commands, done. Same engine the app runs under the hood.
-        </p>
-        <div class="terminal" style="margin:0.5rem 0 0;">
-<pre><span class="prompt">❯</span> pipx install teammate-sync
-<span class="prompt">❯</span> teammate-sync init   <span class="cmt"># GitHub sign-in</span>
-<span class="prompt">❯</span> teammate-sync up     <span class="cmt"># background daemon</span></pre>
-        </div>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;">
-          macOS · Linux · Windows. Needs <a href="https://pipx.pypa.io">pipx</a> + Python 3.11+.
-        </p>
-      </div>
-    </div>
-
-    <p style="margin-top: 1.75rem; font-size: 0.95rem; color: var(--text-muted);">
-      Either way: restart Claude Code, then <code>/connect &lt;teammate&gt;</code>.
-      When they <code>/connect &lt;you&gt;</code> back, context flows. Ask anything
-      with <code>/ask &lt;teammate&gt; &lt;question&gt;</code>. Four slash commands,
-      that's the whole surface. Full walkthrough:
-      <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md">INSTALL.md</a>.
-    </p>
-  </section>
-
-  <!-- HOW IT WORKS -->
-  <section>
-    <h2>How it works</h2>
-    <p>Four steps. One-time setup is under two minutes per engineer.</p>
-
-    <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <div>
-          <h3>Install + sign in</h3>
-          <p>One pipx install, then GitHub OAuth. Your workspace is your GitHub org — we discover your teammates from there. No new account, no manual invites.</p>
-          <code>pipx install teammate-sync</code>
-          <code style="margin-top: 0.4rem;">teammate-sync init</code>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="step-num">2</div>
-        <div>
-          <h3>Start the daemon — backgrounded</h3>
-          <p>A tiny background process watches your workspace. Nothing leaves your machine until you explicitly opt in. No terminal to babysit.</p>
-          <code>teammate-sync up</code>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="step-num">3</div>
-        <div>
-          <h3>Connect with a teammate</h3>
-          <p>In any Claude Code session, name who you want to share with. They <code>/connect</code> back; trust links and only that session's content flows. Sessions you don't connect on never leave your machine.</p>
-          <code>/connect saketh</code>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="step-num">4</div>
-        <div>
-          <h3>Your teammates query you</h3>
-          <p>They type <code>/ask &lt;your-handle&gt; &lt;question&gt;</code>. Their Claude returns a cited synthesis in seconds. You are never interrupted. Their context window never bloats.</p>
-          <code>/ask om what did you decide about X?</code>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FAQ -->
-  <section>
-    <h2>Frequently asked</h2>
-
-    <div class="faq-item">
-      <p class="faq-q">Is this a cloud agent or autonomous AI?</p>
-      <p class="faq-a">
-        No. The Claude Code on each engineer's laptop is the agent. We
-        are connective tissue between humans and their Claudes. No
-        autonomous work, no inference billed by us, no replacement for
-        your existing workflow.
-      </p>
-    </div>
-
-    <div class="faq-item">
-      <p class="faq-q">What about privacy? My client work is sensitive.</p>
-      <p class="faq-a">
-        Default is nothing shared. Sessions only sync when you explicitly
-        type <code>/connect &lt;handle&gt;</code>. Unconnected sessions never leave your
-        machine. When you <code>/unshare</code>, the cloud copy is wiped
-        in one operation. Per-session granularity means your unrelated
-        client work stays local forever.
-      </p>
-    </div>
-
-    <div class="faq-item">
-      <p class="faq-q">Do I need AWS or any other accounts?</p>
-      <p class="faq-a">
-        No. The only account you need is GitHub — which your engineers
-        already have. No bucket setup, no IAM roles, no static
-        credentials anywhere on the engineer's machine.
-      </p>
-    </div>
-
-    <div class="faq-item">
-      <p class="faq-q">Can I see who queried what?</p>
-      <p class="faq-a">
-        Audit log is on the roadmap for the team plan. Every request
-        passes through one server with verified GitHub identity, so the
-        data is captured. Surfacing it as a clean log is a near-term
-        item.
-      </p>
-    </div>
-  </section>
-
-  <!-- PRICING -->
-  <section>
-    <h2>Pricing</h2>
-    <p>Pre-launch. Free during beta. At general availability:</p>
-
-    <div class="pricing-card">
-      <span class="badge">team plan</span>
-      <h3>Bring your own Anthropic key</h3>
-      <div class="price">$20 / engineer / month</div>
-      <p style="margin-top: 0.5rem;">You pay Anthropic for inference. We charge for the platform — hosting, identity, audit, ACLs, multi-source connectors.</p>
-      <ul>
-        <li>GitHub-org-based workspaces</li>
-        <li>Per-session privacy controls</li>
-        <li>Cited synthesis from teammates' Claude Code sessions</li>
-        <li>Slack and Linear integrations (planned)</li>
-        <li>Audit log of all queries (planned)</li>
-      </ul>
-    </div>
-
-    <p style="font-size: 0.9rem; color: var(--text-muted);">
-      Enterprise plan with SSO, SOC2, and on-prem deployment available later.
-      Email om at turgon.ai for early access pricing.
-    </p>
-  </section>
-
-  <!-- ACCESS / CTA -->
-  <section id="access">
-    <h2>Request beta access</h2>
-    <p>
-      We are taking on 3 engineering teams for the closed beta over the
-      next two weeks. Best fit: 3 to 15 engineers, all on Claude Code,
-      same GitHub org.
-    </p>
-    <p>
-      Email <a href="mailto:om@turgon.ai?subject=CodeBaton beta">om at turgon.ai</a>
-      with your team size and what you use Claude Code for. We will reply
-      within 24 hours with setup instructions.
-    </p>
-    <div class="cta">
-      <a href="mailto:om@turgon.ai?subject=CodeBaton beta&body=Team size:%0AWhat we use Claude Code for:%0AGitHub org name (if you want to share):" class="btn btn-primary">Email for beta access</a>
-      <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">Read the code</a>
-    </div>
-  </section>
-
-  <footer>
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap hero-grid">
     <div>
-      Built by <a href="https://twitter.com/omdivyatej">Om Divyatej</a>.
-      Born out of a real Salesforce migration headache.
+      <div class="eyebrow reveal d1">for teams living in Claude Code</div>
+      <h1 class="reveal d2">Pass the <span class="lime">baton</span><br>on your code.</h1>
+      <p class="lead reveal d3">
+        Query a teammate's live Claude Code session — running locally on their
+        own laptop, no cloud setup — and get a cited answer in seconds: what
+        they're building, what they decided, what they ruled out. They never
+        get interrupted.
+      </p>
+      <div class="hero-cta reveal d4">
+        <a class="btn btn-lime" href="#install">Download for Mac ↓</a>
+        <a class="btn btn-ghost" href="#install">or use the CLI</a>
+      </div>
+      <div class="hero-note reveal d5">
+        Apple Silicon · beta · or <a href="https://pypi.org/project/teammate-sync/">pipx install teammate-sync</a>
+      </div>
     </div>
-    <div>
-      <a href="https://github.com/omdivyatej/teammate-sync">github</a> ·
-      <a href="mailto:om@turgon.ai">email</a>
-    </div>
-  </footer>
 
-</div>
+    <div class="reveal d4">
+      <div class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span class="t">your terminal · laptop A</span></div>
+<div class="term-body"><span class="pr">❯</span> <span class="usr">/ask saketh what did you decide about pagination?</span>
+
+<span class="dim">↳ reading saketh's live session…</span>
+
+<span class="out">He went with cursor-based pagination over offset.
+Offset produced duplicate rows under load in a stress
+test — he saw it, switched, and it held steady.</span>
+
+<span class="cite">— from saketh's live session · 14s ago · 7a3f…</span>
+
+<span class="pr">❯</span> <span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- PROBLEM -->
+<section>
+  <div class="wrap read">
+    <div class="eyebrow">the problem</div>
+    <h2>Your teammate's reasoning is trapped on their machine.</h2>
+    <p class="sec-lead">
+      You and a teammate are both deep in Claude Code on the same codebase.
+      You need to know what they decided about the schema, or why they picked
+      one library over another. Today you have two bad options.
+    </p>
+  </div>
+  <div class="wrap">
+    <div class="options">
+      <div class="opt">
+        <div class="n">option 1</div>
+        <h3>Ping them and wait</h3>
+        <p>They're heads-down, three hours into a problem. You break their flow, or you sit blocked for forty-five minutes. Usually both.</p>
+      </div>
+      <div class="opt">
+        <div class="n">option 2</div>
+        <h3>Ask them to paste it</h3>
+        <p>They dump the whole conversation into Slack — hundreds of lines of back-and-forth you scroll through, or paste into your own Claude until it chokes on the context.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT IT DOES -->
+<section>
+  <div class="wrap read">
+    <div class="eyebrow">what CodeBaton does</div>
+    <h2>Their Claude becomes something you can just ask.</h2>
+    <p class="sec-lead">
+      Type a question in plain language. Your Claude reaches into your
+      teammate's live session, pulls the relevant context, and answers with
+      citations — in seconds.
+    </p>
+    <p class="muted" style="margin-top:1.2rem;">
+      The session stays <strong>on their laptop</strong>. Nothing to host, no
+      environment to spin up, no transcript to paste. They don't even get a
+      notification — it's read-only and out of their way. You opt in per
+      session and choose exactly who can see it; the moment the session ends,
+      it's gone.
+    </p>
+  </div>
+</section>
+
+<!-- WHY NOT GITHUB -->
+<section>
+  <div class="wrap read">
+    <div class="eyebrow">why not just read their commits</div>
+    <h2>GitHub has the answer. CodeBaton has the why.</h2>
+    <div class="reasons">
+      <div class="reason">
+        <div class="ix">01</div>
+        <div>
+          <h3>Most reasoning never reaches a commit</h3>
+          <p>Engineers iterate dozens of times per commit. The dead ends, the experiments, the "wait, let me try X" — that's where the knowledge lives, and Git throws all of it away.</p>
+        </div>
+      </div>
+      <div class="reason">
+        <div class="ix">02</div>
+        <div>
+          <h3>Commits show the decision, not the why</h3>
+          <p>"Use cursor pagination" is a one-line diff. The ninety minutes of figuring out why offset broke first is what your teammate actually needs when they hit the same fork.</p>
+        </div>
+      </div>
+      <div class="reason">
+        <div class="ix">03</div>
+        <div>
+          <h3>Reviewed code is sanitized</h3>
+          <p>By the time it lands in main, the messy real reasoning has been edited out for "code quality." The questions, the alternatives, the almost-shipped bug — gone.</p>
+        </div>
+      </div>
+    </div>
+    <p class="kicker">
+      GitHub captures the finished work that survived review. CodeBaton captures the
+      <span class="lime">live reasoning that produced it</span> — including what your
+      teammate is figuring out this second.
+    </p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="wrap read">
+    <div class="eyebrow">how it works</div>
+    <h2>Four slash commands. That's the whole surface.</h2>
+    <div class="cmds">
+      <div class="cmd-row">
+        <code>/connect <span class="arg">&lt;teammate&gt;</span></code>
+        <div class="desc">Link up. They <code style="color:var(--ink-dim)">/connect</code> you back — mutual means trusted. Per session, you decide what's visible.</div>
+      </div>
+      <div class="cmd-row">
+        <code>/ask <span class="arg">&lt;teammate&gt; &lt;question&gt;</span></code>
+        <div class="desc">Query their live session in plain language. Cited answer in seconds, drawn only from what they actually did.</div>
+      </div>
+      <div class="cmd-row">
+        <code>/shared</code>
+        <div class="desc">See exactly what you're sharing, with whom, right now.</div>
+      </div>
+      <div class="cmd-row">
+        <code>/disconnect</code>
+        <div class="desc">Cut it off — one teammate or everyone. Their access to your context ends instantly.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section id="install">
+  <div class="wrap read">
+    <div class="eyebrow">install</div>
+    <h2>Two ways in. Pick your lane.</h2>
+  </div>
+  <div class="wrap">
+    <div class="tracks">
+      <div class="track">
+        <div class="tag lime">for everyone</div>
+        <h3>Desktop app</h3>
+        <p>Download, drag to Applications, sign in with GitHub. Runs sync in the background, ships with everything bundled — no Python, no terminal.</p>
+        <div class="grow"></div>
+        <a class="btn btn-lime" style="align-self:flex-start" href="https://github.com/omdivyatej/teammate-sync/releases/download/desktop-v0.6.0/CodeBaton-0.6.0-arm64.dmg">Download for Mac ↓</a>
+        <div class="fine">Apple Silicon · beta · unsigned (right-click → Open). Intel &amp; Windows soon.</div>
+      </div>
+      <div class="track">
+        <div class="tag blue">for terminal-first devs</div>
+        <h3>CLI</h3>
+        <p>Live in the terminal? Skip the GUI. One package, a few commands — the same engine the app runs under the hood.</p>
+        <div class="term">
+          <div class="term-bar"><i></i><i></i><i></i></div>
+<div class="term-body"><span class="pr">❯</span> <span class="cmd">pipx install teammate-sync</span>
+<span class="pr">❯</span> <span class="cmd">teammate-sync init</span>   <span class="dim"># GitHub sign-in</span>
+<span class="pr">❯</span> <span class="cmd">teammate-sync up</span>     <span class="dim"># background daemon</span></div>
+        </div>
+        <div class="grow"></div>
+        <div class="fine">macOS · Linux · Windows. Needs <a href="https://pipx.pypa.io">pipx</a> + Python 3.11+ · <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md">full guide</a></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section>
+  <div class="wrap read">
+    <div class="eyebrow">faq</div>
+    <h2>The honest answers.</h2>
+  </div>
+  <div class="wrap">
+    <div class="faq">
+      <div class="qa">
+        <div class="q">Is my code safe?</div>
+        <div class="a">Nothing is shared by default. You opt in one session at a time with <code>/connect</code>, and you name exactly who can see it. Only members of your GitHub org can connect at all. When the session ends — or you <code>/disconnect</code> — the shared copy is wiped.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Is this an autonomous cloud agent?</div>
+        <div class="a">No. The AI is the Claude Code already running on each engineer's laptop. CodeBaton is the connective tissue between humans and their Claudes — no autonomous work, no cloud sandbox, nothing billed for inference by us.</div>
+      </div>
+      <div class="qa">
+        <div class="q">What do I need to set up?</div>
+        <div class="a">A GitHub account — that's your workspace, and how teammates are discovered. Plus Claude Code, which you already have. No new accounts, no manual invites, no infrastructure.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Does it interrupt my teammate?</div>
+        <div class="a">Never. Queries are read-only and asynchronous. They don't get pinged, their session isn't touched, and their context window is untouched. They find out you asked only if they look.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="final">
+  <div class="wrap read" style="margin:0 auto;">
+    <h2>Stop pasting transcripts.</h2>
+    <p class="lead" style="color:var(--ink-dim)">Get the baton. Install in under a minute, connect a teammate, and ask their Claude anything.</p>
+    <div class="hero-cta">
+      <a class="btn btn-lime" href="https://github.com/omdivyatej/teammate-sync/releases/download/desktop-v0.6.0/CodeBaton-0.6.0-arm64.dmg">Download for Mac ↓</a>
+      <a class="btn btn-ghost" href="mailto:om@turgon.ai?subject=CodeBaton beta">Email for beta access</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#" style="font-size:15px;"><svg style="width:20px;height:20px"><use href="#mark"/></svg> Code<b>Baton</b></a>
+    <span class="spacer"></span>
+    <a href="https://github.com/omdivyatej/teammate-sync">GitHub</a>
+    <a href="https://pypi.org/project/teammate-sync/">PyPI</a>
+    <a href="mailto:om@turgon.ai">Email</a>
+  </div>
+</footer>
 
 </body>
 </html>
