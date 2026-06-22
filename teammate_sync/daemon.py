@@ -117,6 +117,7 @@ def initial_sync_all(
     backend: StorageBackend,
     shared_session_info: dict[str, list[str]],
     workspace_index: int = 0,
+    last_uploaded_size: dict[str, int] | None = None,
 ) -> int:
     """
     Mirror sources into backend with v0.2 directed-share semantics.
@@ -159,15 +160,17 @@ def initial_sync_all(
                 recipients = shared_session_info[sid]
 
             all_source_keys.add(rel)
-            backend.put_bytes(
-                rel, src_file.read_bytes(),
-                session_id=sid, recipients=recipients,
-            )
+            data = src_file.read_bytes()
+            backend.put_bytes(rel, data, session_id=sid, recipients=recipients)
+            if last_uploaded_size is not None:
+                last_uploaded_size[rel] = len(data)
             written += 1
 
     for existing_key in backend.list_keys():
         if existing_key not in all_source_keys:
             backend.delete_key(existing_key)
+            if last_uploaded_size is not None:
+                last_uploaded_size.pop(existing_key, None)
 
     backend.put_state()
     return written
@@ -212,6 +215,11 @@ class DaemonState:
         self.backend = backend
         self._lock = threading.Lock()
         self.shared_session_info: dict[str, list[str]] = read_shared_session_info(workspace)
+        # Per-file last-uploaded byte size. Used to send delta (append) uploads
+        # instead of re-sending the entire jsonl on every Claude turn. In-memory
+        # only — on daemon restart we don't know server sizes, so the first
+        # event for each file falls back to full upload (which then re-seeds).
+        self.last_uploaded_size: dict[str, int] = {}
 
     @property
     def is_active(self) -> bool:
@@ -248,7 +256,7 @@ class DaemonState:
                     flush=True,
                 )
                 self.shared_session_info = new_info
-                n = initial_sync_all(self.sources, self.backend, new_info)
+                n = initial_sync_all(self.sources, self.backend, new_info, last_uploaded_size=self.last_uploaded_size)
                 print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
             elif old_set and not new_set:
                 print("[sync] share-mode DEACTIVATED → cleaning backend", flush=True)
@@ -265,7 +273,7 @@ class DaemonState:
                     flush=True,
                 )
                 self.shared_session_info = new_info
-                n = initial_sync_all(self.sources, self.backend, new_info)
+                n = initial_sync_all(self.sources, self.backend, new_info, last_uploaded_size=self.last_uploaded_size)
                 print(f"[sync] reconciliation complete: {n} files in sync", flush=True)
 
 
@@ -321,17 +329,49 @@ class MirrorHandler(FileSystemEventHandler):
         try:
             key = self._rel_key(src_path)
             data = Path(src_path).read_bytes()
+            current_size = len(data)
             sid: str | None = None
             recipients: list[str] | None = None
             if not self.is_workspace:
                 sid = extract_session_id_from_path(key)
                 if sid:
                     recipients = self.state.recipients_for(sid)
+            recip_label = f" → [{', '.join(recipients)}]" if recipients else ""
+
+            # Try a delta (append-only) upload first if we have a recorded
+            # size for this file AND the file grew. Backend rejects if its
+            # own size doesn't match our recorded baseline (size_mismatch),
+            # which can happen if the daemon restarted or another writer
+            # touched the file; in that case we fall back to full upload.
+            last_size = self.state.last_uploaded_size.get(key, 0)
+            if last_size and current_size > last_size:
+                delta = data[last_size:]
+                try:
+                    ok, server_size = self.state.backend.append_bytes(
+                        key, delta, expected_size=last_size,
+                        session_id=sid, recipients=recipients,
+                    )
+                    if ok:
+                        self.state.last_uploaded_size[key] = current_size
+                        print(
+                            f"[sync] {label} → {key} (Δ {len(delta)}B / {current_size}B total){recip_label}",
+                            flush=True,
+                        )
+                        self._schedule_state_write()
+                        return
+                    # Backend size didn't match ours; fall through to full
+                    # upload below. server_size tells us what they have now.
+                    self.state.last_uploaded_size[key] = server_size
+                except Exception as e:
+                    print(f"[sync] delta upload failed, falling back to full: {e}", flush=True)
+
+            # Full upload — initial sync of a new file, after mismatch, or
+            # if the file shrunk (shouldn't happen for jsonl but be safe).
             self.state.backend.put_bytes(
                 key, data, session_id=sid, recipients=recipients,
             )
-            recip_label = f" → [{', '.join(recipients)}]" if recipients else ""
-            print(f"[sync] {label} → {key}{recip_label}", flush=True)
+            self.state.last_uploaded_size[key] = current_size
+            print(f"[sync] {label} → {key} (full {current_size}B){recip_label}", flush=True)
             self._schedule_state_write()
         except Exception as e:
             print(f"[sync] error on {label} {src_path}: {e}", flush=True)
@@ -375,6 +415,7 @@ class MirrorHandler(FileSystemEventHandler):
         # reject the upload, we don't want stale keys lingering.
         try:
             self.state.backend.delete_key(key)
+            self.state.last_uploaded_size.pop(key, None)
             print(f"[sync] deleted → {key}", flush=True)
             self._schedule_state_write()
         except Exception as e:
@@ -404,6 +445,9 @@ class MirrorHandler(FileSystemEventHandler):
                 self.state.backend.put_bytes(
                     new_key, data, session_id=sid, recipients=recipients,
                 )
+                self.state.last_uploaded_size[new_key] = len(data)
+                # Old path is no longer current — its baseline is stale.
+                self.state.last_uploaded_size.pop(old_key, None)
             self.state.backend.delete_key(old_key)
             print(f"[sync] moved → {new_key}", flush=True)
             self._schedule_state_write()

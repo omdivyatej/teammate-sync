@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="teammate-sync cloud backend",
     description="GitHub-OAuth identity + SQLite-backed file storage with per-session ACL.",
-    version="0.2.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -126,6 +126,15 @@ class FileUploadRequest(BaseModel):
     org: str
     path: str
     content_b64: str
+    session_id: str | None = None
+    recipients: list[str] = []
+
+
+class FileAppendRequest(BaseModel):
+    org: str
+    path: str
+    content_b64: str   # the DELTA bytes only, not the whole file
+    expected_size: int # caller's belief of current server-side size
     session_id: str | None = None
     recipients: list[str] = []
 
@@ -376,6 +385,43 @@ async def upload_file(
         "owner": user["login"],
         "path": req.path,
         "size": len(content),
+        "shares_registered": n_shares,
+    }
+
+
+@app.post("/v1/files/append")
+async def append_file(
+    req: FileAppendRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """
+    Conditional append. Caller declares `expected_size`; if it matches the
+    server's current file size, we append the delta and return the new
+    size. Otherwise we return ok=False and the client must full-re-upload
+    via POST /v1/files.
+
+    This is the delta-upload primitive for jsonl files which are
+    strictly append-only — saves ~95% of upload bandwidth vs re-sending
+    the entire file every time Claude writes a turn.
+    """
+    await require_workspace_member(user, req.org)
+    import base64
+    try:
+        delta = base64.b64decode(req.content_b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"content_b64 not valid base64: {e}")
+
+    new_size, was_appended = await storage.append_file(
+        req.org, user["login"], req.path, delta, req.expected_size
+    )
+    n_shares = 0
+    if was_appended and req.session_id and req.recipients:
+        n_shares = await storage.share_session(
+            req.org, user["login"], req.session_id, req.recipients
+        )
+    return {
+        "ok": was_appended,
+        "current_size": new_size,
         "shares_registered": n_shares,
     }
 

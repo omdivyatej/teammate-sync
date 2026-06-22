@@ -40,11 +40,15 @@ teammate-sync up
 
 Full walkthrough: [INSTALL.md](INSTALL.md).
 
-`init` opens GitHub OAuth (your workspace = your GitHub org), prompts for
-your Anthropic API key (used by the MCP synthesis call), installs the
-slash commands into `~/.claude/commands/`, wires session hooks, and
+`init` opens GitHub OAuth (your workspace = your GitHub org), installs
+the slash commands into `~/.claude/commands/`, wires session hooks, and
 registers the MCP server. `up` starts the sync daemon in the background —
 no terminal window to babysit. `down` to stop, `logs` to inspect.
+
+**No Anthropic API key required.** The MCP server returns your teammate's
+raw shared context to your Claude Code session and lets Claude reason
+over it directly. No second synthesis call, no extra cost, no extra
+credential to manage.
 
 ## How sharing works (v0.3 — four slash commands, that's the whole surface)
 

@@ -111,6 +111,62 @@ async def put_file(workspace_org: str, owner_handle: str, path: str, content: by
         await db.commit()
 
 
+async def append_file(
+    workspace_org: str,
+    owner_handle: str,
+    path: str,
+    delta_bytes: bytes,
+    expected_size: int,
+) -> tuple[int, bool]:
+    """
+    Append `delta_bytes` to an existing file at `path`, but ONLY if the
+    file's current size matches `expected_size`. This is the conditional-
+    append primitive used by the daemon's delta-upload path.
+
+    Returns (current_size_after_op, was_appended).
+      - was_appended=True  → server now has existing + delta
+      - was_appended=False → size mismatch (or file missing); caller must
+        full-re-upload via put_file. `current_size_after_op` is the actual
+        size the server saw, useful for the client to resync.
+
+    Idempotent-ish: an append of the same delta with the same expected_size
+    is safe to retry only until size moves forward.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT content FROM files WHERE workspace_org=? AND owner_handle=? AND path=?",
+            (workspace_org, owner_handle, path),
+        ) as cur:
+            row = await cur.fetchone()
+        existing = row[0] if row else b""
+        if len(existing) != expected_size:
+            return len(existing), False
+        new_content = existing + delta_bytes
+        now = time.time()
+        await db.execute(
+            """
+            INSERT INTO files (workspace_org, owner_handle, path, content, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(workspace_org, owner_handle, path)
+            DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at
+            """,
+            (workspace_org, owner_handle, path, new_content, now),
+        )
+        await db.commit()
+        return len(new_content), True
+
+
+async def get_file_size(workspace_org: str, owner_handle: str, path: str) -> int:
+    """Return current byte length of a file. 0 if missing."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT LENGTH(content) FROM files WHERE workspace_org=? AND owner_handle=? AND path=?",
+            (workspace_org, owner_handle, path),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
 async def get_file(workspace_org: str, owner_handle: str, path: str) -> bytes | None:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(

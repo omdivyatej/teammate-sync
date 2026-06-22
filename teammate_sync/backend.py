@@ -60,13 +60,28 @@ class StorageBackend(ABC):
         recipients: list[str] | None = None,
     ) -> None:
         """
-        Write bytes at key.
+        Write bytes at key (full overwrite).
 
         For session-jsonl uploads to the cloud backend, the caller passes
         session_id + recipients so the backend can register the per-session
         ACL row alongside the file. Local/S3 backends ignore these
         parameters (they have no notion of ACL beyond owner).
         """
+
+    def append_bytes(
+        self,
+        key: str,
+        delta: bytes,
+        expected_size: int,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> tuple[bool, int]:
+        """
+        Conditional-append optimization. Backends that don't implement it
+        return (False, 0) which causes the daemon to fall back to put_bytes.
+        Only HTTPBackend overrides; Local + S3 always full-upload.
+        """
+        return False, 0
 
     @abstractmethod
     def delete_key(self, key: str) -> None:
@@ -258,9 +273,9 @@ class HTTPBackend(StorageBackend):
         recipients: list[str] | None = None,
     ) -> None:
         """
-        Upload one file. For session jsonl files, pass session_id + recipients
-        so the backend registers per-session ACL rows alongside the file.
-        Non-session files (CLAUDE.md, scratch notes) leave both None.
+        Upload one file (full overwrite). For session jsonl files, pass
+        session_id + recipients so the backend registers per-session ACL
+        rows alongside the file. Non-session files leave both None.
         """
         import base64
 
@@ -275,6 +290,45 @@ class HTTPBackend(StorageBackend):
             payload["recipients"] = recipients
         r = self._client.post("/v1/files", json=payload)
         r.raise_for_status()
+
+    def append_bytes(
+        self,
+        key: str,
+        delta: bytes,
+        expected_size: int,
+        session_id: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> tuple[bool, int]:
+        """
+        Conditional-append. Sends only the delta bytes IF the server's
+        current file size matches `expected_size`.
+
+        Returns (was_appended, server_size).
+          - was_appended=True  → server now has prefix + delta. Caller
+            should update its local last_uploaded_size = server_size.
+          - was_appended=False → size mismatch. Caller must full-upload
+            via put_bytes. server_size is the actual size the server saw.
+
+        Used by the daemon for jsonl files which Claude only appends to.
+        Cuts upload bandwidth dramatically (typical session has 50-200KB
+        of jsonl with ~200B deltas per turn).
+        """
+        import base64
+
+        payload = {
+            "org": self.org,
+            "path": key,
+            "content_b64": base64.b64encode(delta).decode("ascii"),
+            "expected_size": expected_size,
+        }
+        if session_id:
+            payload["session_id"] = session_id
+        if recipients:
+            payload["recipients"] = recipients
+        r = self._client.post("/v1/files/append", json=payload)
+        r.raise_for_status()
+        data = r.json()
+        return bool(data.get("ok", False)), int(data.get("current_size", 0))
 
     def delete_key(self, key: str) -> None:
         r = self._client.delete(

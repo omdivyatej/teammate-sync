@@ -96,41 +96,6 @@ def _register_mcp(binary: str) -> bool:
     return True
 
 
-def _prompt_for_anthropic_key(existing: str | None) -> str | None:
-    """
-    Interactively prompt for the Anthropic API key.
-
-    If `existing` is non-empty, offer to keep it (default) or replace.
-    Returns the key to store (existing or new), or None if the user declined
-    to provide one.
-    """
-    if existing:
-        print(f"\nAnthropic API key is already stored "
-              f"(starts with {existing[:12]}...).")
-        choice = input("  Keep it [k] / replace [r] / skip [s]? ").strip().lower() or "k"
-        if choice == "k":
-            return existing
-        if choice == "s":
-            return existing  # keep the existing rather than clearing
-
-    print()
-    print("Anthropic API key — used by teammate-sync's MCP server to synthesize")
-    print("cited answers when teammates query you. Get one (or reuse an existing")
-    print("one) at https://console.anthropic.com/settings/keys.")
-    print()
-    while True:
-        key = input("  Paste your Anthropic API key (or press Enter to skip): ").strip()
-        if not key:
-            print("  Skipped. The MCP server won't work until you set one.")
-            print("  Re-run `teammate-sync init` to add it later.")
-            return None
-        if not key.startswith("sk-ant-"):
-            print("  That doesn't look like an Anthropic key (should start with 'sk-ant-').")
-            print("  Try again or press Enter to skip.")
-            continue
-        return key
-
-
 def cmd_init(args) -> int:
     binary = _resolve_self_binary()
     backend_url = args.backend_url.rstrip("/")
@@ -236,24 +201,14 @@ def cmd_init(args) -> int:
             break
         print("Invalid choice, try again.")
 
-    # --- Anthropic key (interactive) -----------------------------------------
-    # Preserve any existing key in auth.json on re-run.
-    existing_key = None
-    try:
-        existing_key = json.loads(auth_file_path().read_text()).get("anthropic_key")
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    anthropic_key = _prompt_for_anthropic_key(existing_key)
-
-    path = write_auth(
-        token=token, org=org, backend_url=backend_url,
-        anthropic_key=anthropic_key,
-    )
+    # v0.4: no Anthropic key required anymore. The MCP server no longer
+    # synthesizes — it just hands raw context to the host Claude. We
+    # preserve any existing key in auth.json from older versions (harmless).
+    path = write_auth(token=token, org=org, backend_url=backend_url)
     print(f"\n✓ Saved {path} (mode 0600)")
     print(f"  GitHub:    {me['github_handle']}")
     print(f"  Workspace: {org}")
     print(f"  Backend:   {backend_url}")
-    print(f"  Anthropic: {'set' if anthropic_key else 'NOT SET (MCP server will fail)'}")
 
     # --- Slash commands ------------------------------------------------------
     print("\nInstalling /share /unshare /shared slash commands...")
@@ -358,7 +313,7 @@ _RETIRED_SLASH_COMMANDS = {
 
 
 _ASK_SLASH_MD = """---
-description: Ask a connected teammate (or several) a question. Claude synthesizes the answer from their shared Claude Code context.
+description: Ask a connected teammate (or several) a question. Reads their raw Claude Code session context and answers from it.
 argument-hint: "<handle>[,<handle>...] <question>"
 ---
 
@@ -367,18 +322,27 @@ The user wants to query teammate-sync. Parse the user's argument as:
   - everything after the first token = the question text
 
 For each handle in the list, call the MCP tool
-`mcp__teammate-sync__query_teammate_context` with that handle and the
-question. If the user asked about multiple handles, call the tool once
-per handle (in parallel where possible) and present the answers grouped
-clearly by handle.
+`mcp__teammate-sync__get_teammate_context` with that handle. It returns
+the raw assembled corpus of that teammate's shared sessions (with active-
+session annotations like [ACTIVE — LIVE NOW] and a freshness stamp).
 
-If the tool returns "Not found in shared context." for a handle, surface
-that to the user with a hint: they may need to run `/connect <handle>`
-first, or that teammate hasn't `/connect`-ed this Claude session back yet.
+Then YOU read the corpus and answer the user's question using ONLY what
+it contains. Rules:
+  - Cite by session ID for transcript claims (e.g. "session abc-123
+    [ACTIVE — LIVE NOW]") or by filename for note claims.
+  - For "right now" or "currently" questions, prefer [ACTIVE — LIVE NOW]
+    over older sessions.
+  - If the answer isn't in the corpus, say exactly: "Not found in shared context."
+  - Don't speculate beyond what's written. Don't add preamble like
+    "Based on the corpus...".
+  - If the user asked about multiple handles, fetch all in parallel and
+    present the answers grouped by handle.
+
+If the tool returns a message about content not being visible (no
+/connect-back, no shared sessions), surface it as-is — the user needs to
+act, you can't synthesize around it.
 
 The user's argument is: $ARGUMENTS
-
-Do not add commentary beyond what the tool returns.
 """
 
 

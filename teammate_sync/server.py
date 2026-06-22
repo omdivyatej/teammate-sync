@@ -1,70 +1,45 @@
 #!/usr/bin/env python3
 """
-teammate-sync MCP server.
+teammate-sync MCP server (v0.4).
 
-Exposes one tool — query_teammate_context(question) — that reads a
-teammate's Claude Code working corpus from a configured storage backend
-and returns a cited synthesis of the answer.
+Exposes ONE tool — get_teammate_context — which returns the raw assembled
+session corpus for a connected teammate. No AI synthesis. No Anthropic API
+key required.
 
-The storage backend (local filesystem or S3) is configured via env vars;
-see backend.py.
+The host Claude (the one that called the tool, running in the user's
+Claude Code TUI) does the reasoning over the returned corpus. This is the
+right shape for MCP: tools provide context, the calling LLM reasons.
+
+Why we dropped synthesis (was in v0.3.x):
+  - Lossless: no paraphrasing layer between asker and data
+  - No Anthropic key required — the single biggest onboarding pain we had
+  - Cheaper + faster (no extra Claude API round-trip)
+  - More expressive: host Claude can summarize, grep, compare across turns
+
+The storage backend is configured via env vars; see backend.py.
 """
 import json
 import os
 import time
 from datetime import datetime, timezone
 
-from anthropic import Anthropic
 from mcp.server.fastmcp import FastMCP
 
 import httpx
 
-from .auth import read_anthropic_key, read_auth
+from .auth import read_auth
 from .backend import ACTIVE_SESSIONS_FILENAME, HTTPBackend, StorageBackend
 
 
-SYNTHESIS_MODEL = os.environ.get("TEAMMATE_SYNTHESIS_MODEL", "claude-sonnet-4-6")
-# Soft cap on corpus bytes passed to the synthesis call. Claude Sonnet 4.6 has
-# a large context window, but we keep this conservative for cost + latency.
+# Soft cap on assembled corpus bytes returned to the host Claude. Host
+# Claude has plenty of context (1M tokens on Claude 4.x), but we cap to
+# avoid surprising blowups on extremely long teammate sessions.
 MAX_CORPUS_BYTES = 400_000
 STALE_THRESHOLD_SECONDS = 30 * 60  # 30 minutes
 
 
 mcp = FastMCP("teammate-sync")
-# Read the Anthropic key from ~/.teammate-sync/auth.json (written by
-# `teammate-sync init`). Failing fast here gives the user a clear remediation
-# message before any MCP tool call is attempted.
-anthropic_client = Anthropic(api_key=read_anthropic_key())
-print("[server] backend-mediated mode — auth from ~/.teammate-sync/auth.json", flush=True)
-
-
-SYNTHESIS_PROMPT_TEMPLATE = """You are reading a teammate's Claude Code working corpus to answer a coworker's question.
-
-A coworker asks: {question}
-
-Below is the teammate's corpus, in two parts:
-  1. ACTIVE SESSIONS — live process state (cwd, last activity time) of the teammate's currently-running Claude Code processes.
-  2. PERSISTENT CORPUS — their CLAUDE.md, session transcripts, and scratch notes.
-
-Session ordering: each session transcript is labelled with one of:
-  - [ACTIVE — LIVE NOW]: the session the teammate is currently typing in. Prefer this for questions about "right now", "most recent message", or "what is he saying."
-  - [MOST RECENT SESSION]: the highest-timestamp session if none is currently active.
-  - [older session #N]: historical, deprioritize unless explicitly asked about the past.
-Each header also has a `last message <timestamp>` so you can verify chronology yourself.
-
-CORPUS:
-{corpus}
-
-Instructions:
-- Answer ONLY the asked question. Do not summarize the corpus broadly.
-- Be concise — under 500 words.
-- CITE the specific source for every factual claim: file name (e.g. "CLAUDE.md"), or session id with the marker (e.g. "session abc-123 [ACTIVE — LIVE NOW]").
-- For "most recent" questions, the [ACTIVE — LIVE NOW] session OR the [MOST RECENT SESSION] should be your primary source. If you cite an [older session #N] for a "most recent" question, you're wrong.
-- If the corpus does not contain the answer, say exactly: "Not found in shared context."
-- Do not speculate beyond what is written in the corpus.
-- Do not include preamble like "Based on the corpus..." — just answer.
-
-Answer:"""
+print("[server] v0.4 context-fetcher mode — auth from ~/.teammate-sync/auth.json", flush=True)
 
 
 def _parse_iso_epoch(ts: str) -> float | None:
@@ -330,85 +305,35 @@ def list_teammates() -> list[str]:
 
 
 @mcp.tool()
-def dump_teammate_context(teammate: str, session_id: str | None = None) -> str:
-    """Return the RAW transcript / file content of a teammate's shared session.
+def get_teammate_context(teammate: str) -> str:
+    """Fetch a teammate's raw Claude Code session context.
 
-    Unlike query_teammate_context, this does NO Claude synthesis — it just
-    returns the literal bytes from a teammate's session jsonl (or the index
-    of session IDs visible to you, if session_id is omitted). Useful for:
-      - Debugging: "did the share actually flow through? what's in it?"
-      - Power users who want to read the raw conversation themselves.
-      - Avoiding cost/latency of a synthesis call.
+    Returns the literal assembled corpus of a connected teammate's shared
+    sessions — their CLAUDE.md (if any), per-session transcripts (rendered
+    from jsonl into readable text), and a live "active sessions" snapshot
+    showing which session they're typing in right now. Sessions are
+    annotated with [ACTIVE — LIVE NOW] / [MOST RECENT SESSION] /
+    [older session #N] so the calling Claude can pick the right one.
 
-    Args:
-        teammate: The teammate's GitHub handle.
-        session_id: If provided, dumps that specific session's jsonl. If
-                    omitted, returns a list of session IDs visible to you
-                    along with their sizes.
+    There is NO synthesis. The calling Claude must read this corpus and
+    answer the user's question itself, citing by session ID.
 
-    Returns:
-        Raw session text, OR an index listing visible sessions.
-    """
-    try:
-        auth = read_auth()
-        backend = HTTPBackend(
-            backend_url=auth["backend_url"],
-            token=auth["token"],
-            org=auth["org"],
-            teammate=teammate,
-        )
-        if session_id is None:
-            result = backend.dump(teammate)
-            files = result.get("visible_files", [])
-            if not files:
-                return (
-                    f"No sessions from {teammate} are visible to you.\n"
-                    f"Either they haven't /share'd with you, or you haven't /accept'd "
-                    f"their connection request. Run /connections to check pending invites."
-                )
-            lines = [f"Files visible from {teammate} ({len(files)}):"]
-            for f in files:
-                lines.append(f"  {f['path']}  ({f['size']} bytes)")
-            lines.append("")
-            lines.append(
-                "Dump a specific session by calling dump_teammate_context "
-                f"with session_id=<one of the .jsonl basenames above>."
-            )
-            return "\n".join(lines)
-        # Specific session
-        raw = backend.dump(teammate, session_id)
-        if isinstance(raw, bytes):
-            try:
-                return raw.decode("utf-8")
-            except UnicodeDecodeError:
-                return raw.decode("utf-8", errors="replace")
-        return str(raw)
-    except Exception as e:
-        return f"[Error: {e}]"
-
-
-@mcp.tool()
-def query_teammate_context(teammate: str, question: str) -> str:
-    """Query a specific teammate's Claude Code working context.
-
-    Reads the named teammate's CLAUDE.md, session transcripts, and scratch
-    notes from the shared cloud backend, then returns a synthesized, cited
-    answer (~500 words) drawn ONLY from their actual corpus.
-
-    If you don't know who's available, call list_teammates() first.
-
-    If the answer is not in the corpus (or the teammate hasn't /share'd
-    anything yet), the tool returns: "Not found in shared context."
+    If the teammate hasn't `/connect`-ed any session with the caller (or
+    the caller isn't trusted yet), the corpus will be empty and the tool
+    returns a message explaining what's missing.
 
     Args:
-        teammate: The teammate's GitHub handle (e.g. "saketh"). Case-sensitive.
-        question: A natural-language question. Be specific — e.g.
-                  "What did they decide about cursor-based pagination?"
-                  rather than "Tell me everything they did."
+        teammate: The teammate's GitHub handle, case-sensitive.
 
     Returns:
-        A cited, synthesized answer string with a freshness stamp,
-        prefixed with the teammate's handle.
+        Multi-section text:
+          - usage hint header (how to cite, how to handle missing data)
+          - freshness stamp (how recent this teammate's last sync was)
+          - === ACTIVE SESSIONS (live) === block
+          - === CLAUDE.md === block (if shared)
+          - === Session <id> [ACTIVE — LIVE NOW] — last message <ts> === blocks
+          - === Note: <path> === blocks for any other shared .md files
+        Capped at ~400KB; truncated with a marker if larger.
     """
     try:
         auth = read_auth()
@@ -423,39 +348,36 @@ def query_teammate_context(teammate: str, question: str) -> str:
 
     corpus = load_corpus(backend)
     if corpus.startswith("[Error"):
-        return f"[{teammate}] {corpus}"
-
-    prompt = SYNTHESIS_PROMPT_TEMPLATE.format(question=question, corpus=corpus)
-
-    response = anthropic_client.messages.create(
-        model=SYNTHESIS_MODEL,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    answer = None
-    for block in response.content:
-        if getattr(block, "type", None) == "text":
-            answer = block.text
-            break
-
-    if answer is None:
-        return f"[{teammate}] [Error: synthesis returned no text]"
+        return (
+            f"No context visible from {teammate}.\n\n"
+            f"Either they haven't /connect-ed you to any of their sessions, "
+            f"or you haven't /connect-ed back yet. Their content only flows "
+            f"after both sides /connect each other. Run /connect (no args) "
+            f"to see workspace status; or /connect {teammate} to share back.\n\n"
+            f"Raw backend error: {corpus}"
+        )
 
     freshness = get_sync_freshness(backend)
     if freshness is None:
-        return f"[from {teammate}]\n\n{answer}"
+        freshness_line = f"# Freshness: unknown\n"
+    else:
+        age_str = format_age(freshness["age_seconds"])
+        warn = " ⚠️ STALE (>30 min)" if freshness["is_stale"] else ""
+        freshness_line = f"# Freshness: synced {age_str}{warn}\n"
 
-    age_str = format_age(freshness["age_seconds"])
-    if freshness["is_stale"]:
-        prefix = (
-            f"⚠️  Stale sync warning: {teammate}'s corpus was last "
-            f"updated {age_str}. Information below may be outdated.\n\n"
-        )
-        suffix = f"\n\n— {teammate}'s context as of {age_str}"
-        return prefix + answer + suffix
-
-    return f"[from {teammate}]\n\n{answer}\n\n— {teammate}'s context as of {age_str}"
+    header = (
+        f"# teammate-sync context — teammate: {teammate}\n"
+        f"{freshness_line}"
+        f"#\n"
+        f"# Read the corpus below and answer the user's question using ONLY\n"
+        f"# this content. Cite by session ID for transcript claims, by\n"
+        f"# filename for note claims. Sessions labeled [ACTIVE — LIVE NOW]\n"
+        f"# are what {teammate} is typing in this moment — prefer them for\n"
+        f"# 'right now' / 'currently' questions. Say exactly\n"
+        f"# 'Not found in shared context.' if the answer isn't here.\n"
+        f"\n"
+    )
+    return header + corpus
 
 
 if __name__ == "__main__":

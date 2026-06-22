@@ -7,9 +7,8 @@ Three commands. Then type `/connect <teammate>` in any Claude Code session.
 - Python 3.11+ (`python3.11 --version`)
 - `pipx` (`brew install pipx && pipx ensurepath` — one-time)
 - `claude` (Claude Code CLI)
-- An Anthropic API key from https://console.anthropic.com/settings/keys
-  (you'll paste it once during `init`; stored at `~/.teammate-sync/auth.json`,
-  never in your shell env)
+(Anthropic API key NOT required — v0.4 removed the synthesis layer. Your
+host Claude does the reasoning over teammate context directly.)
 
 ## 1. Install
 
@@ -28,10 +27,9 @@ This one command:
    org-access screen click **Grant** for the org you want as your workspace).
 2. Captures the access token to `~/.teammate-sync/auth.json` (mode 0600).
 3. Asks you to pick which GitHub org is your workspace.
-4. Prompts for your Anthropic API key.
-5. Installs the v0.3 slash commands into `~/.claude/commands/`.
-6. Merges session hooks into `~/.claude/settings.json`.
-7. Registers the MCP server with Claude Code (user scope).
+4. Installs the slash commands into `~/.claude/commands/`.
+5. Merges session hooks into `~/.claude/settings.json`.
+6. Registers the MCP server with Claude Code (user scope).
 
 ## 3. Start the daemon — backgrounded
 
@@ -171,13 +169,30 @@ Fly backend cold start takes 5–10s. First request slow, subsequent fast.
 **Slash commands don't appear:**
 Restart Claude Code. Custom commands load at session start.
 
+## Upgrading from v0.3
+
+v0.4 dropped the synthesis MCP tool and the Anthropic key requirement.
+Your auth.json's existing `anthropic_key` field is ignored (harmless to
+leave). After upgrade, just:
+
+```
+teammate-sync down
+pipx upgrade teammate-sync
+teammate-sync up
+```
+
+The MCP server now exposes a single tool (`get_teammate_context`)
+instead of the old three. The `/ask` slash command body was rewritten
+to call it. `teammate-sync install-commands` writes the new template;
+your existing /connect, /disconnect, /shared slash commands keep
+working unchanged.
+
+The daemon now uses delta uploads (append-only) instead of re-sending
+the full session jsonl on every Claude turn. Backend exposes a new
+`/v1/files/append` endpoint for this; old clients fall back to full
+uploads via `/v1/files` so mixed-version teams keep working.
+
 ## Upgrading from v0.2
 
-Old slash commands `/share`, `/unshare`, `/connections`, `/accept`,
-`/decline`, `/teammates`, `/show` are retired. `teammate-sync
-install-commands` removes their `.md` files automatically. The four
-remaining commands (`/connect`, `/disconnect`, `/shared`, `/ask`) cover
-everything the old set did.
-
-Backend doesn't change between v0.2 and v0.3 — your existing connections
-and trust relationships carry over.
+See v0.3 release notes — collapsed 9 slash commands to 4. Run
+`teammate-sync install-commands` to auto-clean retired commands.
