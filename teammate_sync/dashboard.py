@@ -238,6 +238,7 @@ function render(data) {
 
   const conn = data.connections || {};
   const pendingIn = conn.pending_incoming || [];
+  const pendingOut = conn.pending_outgoing || [];
 
   let inviteBar = '';
   if (pendingIn.length) {
@@ -249,6 +250,20 @@ function render(data) {
             <strong>${escapeHtml(p.peer_handle)}</strong> wants to connect.
             <button onclick="postAction('/accept', '${encodeURIComponent(p.peer_handle)}')">accept</button>
             <button class="danger" onclick="postAction('/decline', '${encodeURIComponent(p.peer_handle)}')">decline</button>
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  let outBar = '';
+  if (pendingOut.length) {
+    outBar = `
+      <div class="invite-bar" style="border-color: #3a3a3a; background: #161616;">
+        <h3 style="color: var(--accent);">${pendingOut.length} request${pendingOut.length>1?'s':''} sent — awaiting their /connect</h3>
+        ${pendingOut.map(p => `
+          <div style="margin: 0.4rem 0;">
+            → <strong>${escapeHtml(p.peer_handle)}</strong> · waiting for them to /connect you back.
+            <button class="danger" onclick="postAction('/disconnect', '${encodeURIComponent(p.peer_handle)}')">cancel</button>
           </div>
         `).join('')}
       </div>`;
@@ -287,6 +302,7 @@ function render(data) {
 
   document.getElementById('root').innerHTML = `
     ${inviteBar}
+    ${outBar}
     <h2>Accepted connections</h2>
     ${acceptedHtml}
     <div class="col-wrap">
