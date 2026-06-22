@@ -649,6 +649,25 @@ def cmd_upgrade(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    """Launch the macOS menu bar app, or install/remove its LaunchAgent."""
+    if sys.platform != "darwin":
+        print("teammate-sync app is currently macOS-only.", file=sys.stderr)
+        return 1
+    try:
+        from . import macapp
+    except RuntimeError as e:
+        # rumps not installed (e.g. user did pipx install without macOS extras)
+        print(f"[teammate-sync app] {e}", file=sys.stderr)
+        return 1
+
+    if args.install_launchagent:
+        return macapp.install_launchagent_only()
+    if args.uninstall_launchagent:
+        return macapp.uninstall_launchagent_only()
+    return macapp.run()
+
+
 def cmd_logs(args) -> int:
     """Tail the daemon log. With -f, follow."""
     import subprocess as _sp
@@ -760,6 +779,17 @@ def main() -> int:
         "upgrade",
         help="One-shot upgrade: stop daemon → pipx upgrade → refresh slash commands → restart daemon.",
     ).set_defaults(func=cmd_upgrade)
+
+    p_app = sub.add_parser(
+        "app",
+        help="Launch the macOS menu bar app (foreground). "
+             "Auto-start at login via --install-launchagent.",
+    )
+    p_app.add_argument("--install-launchagent", action="store_true",
+                       help="Install a LaunchAgent plist so the app launches at every login.")
+    p_app.add_argument("--uninstall-launchagent", action="store_true",
+                       help="Remove the LaunchAgent (stop auto-start at login).")
+    p_app.set_defaults(func=cmd_app)
 
     p_logs = sub.add_parser("logs", help="Tail the daemon log.")
     p_logs.add_argument("-f", "--follow", action="store_true",
