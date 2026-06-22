@@ -1,0 +1,13 @@
+{
+  "name": "CodeBaton",
+  "short_name": "CodeBaton",
+  "description": "Query a teammate's live Claude Code session and get a cited answer in seconds.",
+  "start_url": "/teammate-sync/",
+  "display": "standalone",
+  "theme_color": "#0c0c0f",
+  "background_color": "#0c0c0f",
+  "icons": [
+    { "src": "/teammate-sync/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/teammate-sync/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

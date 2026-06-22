@@ -2,7 +2,81 @@
 <html lang="en"><head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeBaton - Pass the baton on your code</title>
+    <title>CodeBaton — Query a teammate's live Claude Code session</title>
+    <meta name="description" content="Query a teammate's live Claude Code session — running locally on their own laptop — and get a cited answer in seconds. No pasted transcripts, no cloud setup, no interruptions.">
+    <link rel="canonical" href="https://omdivyatej.github.io/teammate-sync/">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#0c0c0f">
+    <meta name="author" content="Om Divyatej">
+    <meta name="keywords" content="Claude Code, AI pair programming, share context, teammate, code context, developer tools, MCP, ask teammate AI">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="CodeBaton">
+    <meta property="og:url" content="https://omdivyatej.github.io/teammate-sync/">
+    <meta property="og:title" content="CodeBaton — pass the baton on your code">
+    <meta property="og:description" content="Query a teammate's live Claude Code session and get a cited answer in seconds. No pasted transcripts, no cloud setup, no interruptions.">
+    <meta property="og:image" content="https://omdivyatej.github.io/teammate-sync/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CodeBaton — pass the baton on your code">
+    <meta name="twitter:description" content="Query a teammate's live Claude Code session and get a cited answer in seconds.">
+    <meta name="twitter:image" content="https://omdivyatej.github.io/teammate-sync/og-image.png">
+
+    <!-- Favicons / PWA -->
+    <link rel="icon" href="/teammate-sync/favicon.ico" sizes="any">
+    <link rel="icon" href="/teammate-sync/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/teammate-sync/apple-touch-icon.png">
+    <link rel="manifest" href="/teammate-sync/site.webmanifest">
+
+    <!-- Structured data: app + FAQ (for search + AI answer engines) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "CodeBaton",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "description": "Query a teammate's live Claude Code session — running locally on their own laptop — and get a cited answer in seconds. No pasted transcripts, no cloud setup, no interruptions.",
+      "url": "https://omdivyatej.github.io/teammate-sync/",
+      "downloadUrl": "https://github.com/omdivyatej/teammate-sync/releases",
+      "softwareVersion": "0.6.4",
+      "author": { "@type": "Person", "name": "Om Divyatej" },
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is CodeBaton a cloud agent?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. CodeBaton is a peer-to-peer sync utility for local Claude Code instances. The AI is the Claude Code already running on each engineer's laptop; CodeBaton just connects them. No autonomous work, no cloud sandbox." }
+        },
+        {
+          "@type": "Question",
+          "name": "What about privacy and code safety?",
+          "acceptedAnswer": { "@type": "Answer", "text": "By default nothing is shared. The /connect command opts one session in, to specific people you name, and only members of your GitHub org can connect. Running /disconnect — or simply ending the session — wipes the shared copy immediately." }
+        },
+        {
+          "@type": "Question",
+          "name": "Do you need any infrastructure to run CodeBaton?",
+          "acceptedAnswer": { "@type": "Answer", "text": "None. No AWS, no buckets, no servers. Sessions stay on your laptops; CodeBaton runs a thin sync layer in between. Your workspace is your existing GitHub org." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does querying a teammate interrupt them?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Never. Queries are read-only and asynchronous. Your teammate is not pinged, their session is untouched, and their context window is unaffected." }
+        }
+      ]
+    }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">

@@ -1,0 +1,30 @@
+# CodeBaton
+
+> CodeBaton lets engineering teams query each other's live Claude Code sessions. You ask in plain language, your Claude pulls a teammate's in-progress context from the session running on their own laptop, and you get a cited answer in seconds — without interrupting them.
+
+## What it is
+- A peer-to-peer context layer for teams using Claude Code (Anthropic's terminal coding agent).
+- The metaphor: a relay baton. You hand your live coding context to a teammate so they pick up exactly where you are — your reasoning, decisions, and dead ends.
+- Sessions stay local on each engineer's laptop. No cloud sandbox, no hosted environment, no transcript pasting.
+
+## How it works (four slash commands)
+- /connect <teammate>: link up; they /connect you back, mutual means trusted (per session, you choose what is visible).
+- /ask <teammate> <question>: query their live session in plain language; cited answer in seconds.
+- /shared: see what you are sharing, with whom.
+- /disconnect: cut off one teammate or everyone.
+
+## Why not GitHub
+GitHub captures the finished work that survived review. CodeBaton captures the live reasoning that produced it — most reasoning never reaches a commit, commits show the decision not the why, and reviewed code is sanitized.
+
+## Privacy
+Nothing is shared by default. You opt in per session to specific people; only members of your GitHub org can connect; ending the session or running /disconnect wipes the shared copy immediately.
+
+## Install
+- Desktop app (macOS, Apple Silicon, beta): https://github.com/omdivyatej/teammate-sync/releases
+- CLI (macOS, Linux, Windows): pipx install teammate-sync
+
+## Links
+- Site: https://omdivyatej.github.io/teammate-sync/
+- Source: https://github.com/omdivyatej/teammate-sync
+- PyPI: https://pypi.org/project/teammate-sync/
+- Contact: om@turgon.ai
