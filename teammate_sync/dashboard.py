@@ -584,7 +584,7 @@ document.querySelectorAll('.nav-item').forEach(e=>e.addEventListener('click',()=
 async function poll(){
   try{
     const d = await getJ('/data.json'); last=d;
-    top(d); status(d); connections(d); sessions(d);
+    renderTop(d); renderStatus(d); renderConns(d); renderSessions(d);
     $('foot-dot').className='live-dot on'; $('foot-text').textContent='synced';
     $('t-fresh').textContent = 'updated '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }catch(e){
@@ -592,12 +592,12 @@ async function poll(){
     $('p-status').innerHTML='<div class="err-box">Can\'t reach the backend: '+esc(e.message)+'</div>';
   }
 }
-function top(d){
+function renderTop(d){
   $('t-handle').textContent='@'+(d.me||'?'); $('t-ws').textContent=d.org?('· '+d.org):'';
   $('set-handle').textContent='@'+(d.me||'?'); $('set-ws').textContent=d.org?('workspace: '+d.org):'';
   $('set-av').textContent=initial(d.me);
 }
-function status(d){
+function renderStatus(d){
   const c=d.connections||{}, acc=c.accepted||[], pin=c.pending_incoming||[], pout=c.pending_outgoing||[];
   const mine=d.my_sessions||[], theirs=(d.teammates||[]).flatMap(t=>t.sessions||[]);
   $('stats').innerHTML = `
@@ -619,7 +619,7 @@ function status(d){
     $('d-start').disabled=false; $('d-stop').disabled=true;
   }
 }
-function connections(d){
+function renderConns(d){
   const c=d.connections||{};
   $('c-accepted').innerHTML=(c.accepted||[]).length ? (c.accepted||[]).map(x=>`
     <div class="card"><div class="crow">
@@ -645,7 +645,7 @@ function connections(d){
       <button class="danger" onclick="post('/decline',{peer:'${esc(x.peer_handle)}'})">Decline</button>
     </div></div>`).join('') : `<div class="sub" style="padding:4px 2px">None.</div>`;
 }
-function sessions(d){
+function renderSessions(d){
   const mine=d.my_sessions||[];
   $('s-mine').innerHTML=mine.length ? mine.map(s=>`
     <div class="card"><div class="mono">${esc(s.session_id)}</div>

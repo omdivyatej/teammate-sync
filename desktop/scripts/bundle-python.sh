@@ -83,18 +83,22 @@ if [[ ! -x "$PYBIN" ]]; then
 fi
 echo "==> Bundled interpreter: $PYBIN"
 
-# ── Build the teammate-sync wheel + install into the bundled runtime ─────────
-echo "==> Building teammate-sync wheel from $REPO_ROOT…"
-( cd "$REPO_ROOT" && rm -rf dist && python3 -m build --wheel >/dev/null 2>&1 ) || {
-  echo "ERROR: wheel build failed. Run 'python3 -m build --wheel' in $REPO_ROOT to debug." >&2
-  exit 1
-}
-WHEEL="$(ls -t "$REPO_ROOT"/dist/teammate_sync-*.whl | head -1)"
-echo "==> Wheel: $WHEEL"
-
-echo "==> Installing wheel + deps into bundled runtime…"
+# ── Install teammate-sync (+ deps) into the bundled runtime ──────────────────
+# The bundled interpreter builds the package in-process via its own pip +
+# the setuptools backend, so we don't depend on any system Python having
+# `build`. Prefer a prebuilt wheel in dist/ if one exists; else install from
+# the repo source directory directly.
+echo "==> Upgrading bundled pip…"
 "$PYBIN" -m pip install --upgrade pip >/dev/null
-"$PYBIN" -m pip install "$WHEEL" >/dev/null
+
+WHEEL="$(ls -t "$REPO_ROOT"/dist/teammate_sync-*.whl 2>/dev/null | head -1 || true)"
+if [[ -n "$WHEEL" ]]; then
+  echo "==> Installing prebuilt wheel: $WHEEL"
+  "$PYBIN" -m pip install "$WHEEL" >/dev/null
+else
+  echo "==> No prebuilt wheel; installing from source ($REPO_ROOT)…"
+  "$PYBIN" -m pip install "$REPO_ROOT" >/dev/null
+fi
 
 # ── Trim to shrink bundle size ──────────────────────────────────────────────
 echo "==> Trimming runtime (tests, caches, pyc)…"
