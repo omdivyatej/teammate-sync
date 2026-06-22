@@ -592,6 +592,63 @@ def cmd_down(args) -> int:
     return 0
 
 
+def cmd_upgrade(args) -> int:
+    """
+    One-shot upgrade: stop daemon, pipx upgrade teammate-sync, reinstall
+    slash commands (cleans retired ones), restart daemon. Equivalent to:
+
+        teammate-sync down
+        pipx upgrade teammate-sync
+        teammate-sync install-commands
+        teammate-sync up
+
+    Works because after `pipx upgrade` the new binary lives at the same
+    path; we shell out to it for install-commands and up so the latest
+    code runs those steps (the current process is still the old code,
+    held in memory).
+    """
+    import shutil
+    import subprocess as _sp
+
+    if not shutil.which("pipx"):
+        print("Error: pipx not on PATH. Manual upgrade:", file=sys.stderr)
+        print("  teammate-sync down", file=sys.stderr)
+        print("  pip install -U teammate-sync  # or pipx upgrade if you can install it", file=sys.stderr)
+        print("  teammate-sync install-commands", file=sys.stderr)
+        print("  teammate-sync up", file=sys.stderr)
+        return 1
+
+    print("→ Stopping daemon...")
+    cmd_down(args)
+
+    print("\n→ Upgrading via pipx...")
+    res = _sp.run(["pipx", "upgrade", "teammate-sync"])
+    if res.returncode != 0:
+        print("pipx upgrade failed. Daemon is stopped; restart with `teammate-sync up` once you fix the install.",
+              file=sys.stderr)
+        return res.returncode
+
+    binary = shutil.which("teammate-sync")
+    if not binary:
+        print("Error: teammate-sync no longer on PATH after upgrade.", file=sys.stderr)
+        return 1
+
+    print("\n→ Refreshing slash commands (will clean up any retired ones)...")
+    res = _sp.run([binary, "install-commands"])
+    if res.returncode != 0:
+        return res.returncode
+
+    print("\n→ Starting daemon...")
+    res = _sp.run([binary, "up"])
+    if res.returncode != 0:
+        return res.returncode
+
+    print()
+    print("✓ Upgrade complete.")
+    print("  Restart any open Claude Code sessions to pick up new hooks + MCP + slash commands.")
+    return 0
+
+
 def cmd_logs(args) -> int:
     """Tail the daemon log. With -f, follow."""
     import subprocess as _sp
@@ -698,6 +755,11 @@ def main() -> int:
 
     p_down = sub.add_parser("down", help="Stop the backgrounded sync daemon.")
     p_down.set_defaults(func=cmd_down)
+
+    sub.add_parser(
+        "upgrade",
+        help="One-shot upgrade: stop daemon → pipx upgrade → refresh slash commands → restart daemon.",
+    ).set_defaults(func=cmd_upgrade)
 
     p_logs = sub.add_parser("logs", help="Tail the daemon log.")
     p_logs.add_argument("-f", "--follow", action="store_true",
