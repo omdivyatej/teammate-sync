@@ -75,11 +75,17 @@ def _backend():
 
 
 def _resolve_self_binary() -> str:
-    """Find the teammate-sync binary for subprocess calls."""
+    """Find the teammate-sync binary for subprocess calls.
+
+    Honors $TEAMMATE_SYNC_BIN (set by the Electron desktop app to a shim
+    that execs the bundled Python) before falling back to PATH lookup.
+    """
+    env_bin = os.environ.get("TEAMMATE_SYNC_BIN")
+    if env_bin:
+        return env_bin
     found = shutil.which("teammate-sync")
     if found:
         return found
-    # Fallback to sys.argv[0] if launched from script context
     cand = Path(sys.argv[0]).resolve()
     if cand.exists() and cand.name == "teammate-sync":
         return str(cand)
@@ -1120,6 +1126,7 @@ def run_dashboard(
     port: int | None = None,
     open_browser: bool = True,
     use_window: bool | None = None,
+    serve_only: bool = False,
 ) -> int:
     """
     Launch the dashboard.
@@ -1128,18 +1135,37 @@ def run_dashboard(
     real desktop app). Falls back to the system browser if pywebview is
     unavailable or use_window=False is forced.
 
-    Set use_window=False to force browser mode.
+    serve_only=True: start ONLY the HTTP server (no window, no browser),
+    print {"port": N} as a JSON line to stdout, and block forever. This is
+    the mode the Electron desktop app drives — it reads the port from
+    stdout and loads it in a BrowserWindow.
     """
     try:
         backend = _backend()
     except (FileNotFoundError, ValueError) as e:
-        print(f"Error: {e}", file=sys.stderr)
+        if serve_only:
+            print(json.dumps({"error": str(e)}), flush=True)
+        else:
+            print(f"Error: {e}", file=sys.stderr)
         return 1
 
     if port is None:
         port = _pick_free_port()
     url = f"http://127.0.0.1:{port}/"
     server = _start_http_server_in_thread(backend, port)
+
+    if serve_only:
+        # Machine-readable handshake for the Electron host, then block.
+        print(json.dumps({"port": port, "url": url}), flush=True)
+        try:
+            import time
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+        server.shutdown()
+        return 0
+
     print(f"[dashboard] serving at {url}")
 
     # Try the native window first; gracefully degrade to browser

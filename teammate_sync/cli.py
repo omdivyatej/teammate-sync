@@ -384,10 +384,18 @@ _INSTALL_ACTIONS = ["connect", "disconnect", "shared", "ask"]
 
 def _resolve_self_binary() -> str:
     """
-    Find where the installed `teammate-sync` binary lives.
+    Find where the `teammate-sync` binary lives.
     Hooks, MCP, and slash commands all dispatch through it.
+
+    Honors $TEAMMATE_SYNC_BIN first — the Electron desktop app sets this to
+    a shim that execs the bundled Python, so a system-wide pipx install
+    isn't required for the bundled-app flow.
     """
+    import os as _os
     import shutil
+    env_bin = _os.environ.get("TEAMMATE_SYNC_BIN")
+    if env_bin:
+        return env_bin
     found = shutil.which("teammate-sync")
     if not found:
         raise RuntimeError(
@@ -449,12 +457,13 @@ def cmd_disconnect(args) -> int:
 def cmd_dashboard(args) -> int:
     from . import dashboard as _dashboard
     use_window = None
-    if args.browser:
+    if args.browser or args.serve_only:
         use_window = False
     return _dashboard.run_dashboard(
         port=args.port,
         open_browser=not args.no_browser,
         use_window=use_window,
+        serve_only=args.serve_only,
     )
 
 
@@ -817,6 +826,9 @@ def main() -> int:
                         help="When falling back to browser mode, don't auto-open it.")
     p_dash.add_argument("--browser", action="store_true",
                         help="Force browser mode (skip pywebview native window).")
+    p_dash.add_argument("--serve-only", action="store_true",
+                        help="Headless: start the HTTP server, print {\"port\": N} as JSON, "
+                             "block forever. Used by the Electron desktop app.")
     p_dash.set_defaults(func=cmd_dashboard)
 
     # ── Foreground daemon (kept for `teammate-sync up` to invoke + power users) ──

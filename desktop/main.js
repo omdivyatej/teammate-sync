@@ -1,0 +1,342 @@
+// teammate-sync desktop app — Electron main process.
+//
+// Responsibilities:
+//   1. Resolve a Python interpreter:
+//        - packaged: the bundled python-build-standalone runtime in resources
+//        - dev:      $TEAMMATE_SYNC_DEV_PYTHON or `python3` on PATH
+//      The interpreter has the `teammate_sync` package importable.
+//   2. Write a shim (TEAMMATE_SYNC_BIN) that execs `<python> -m teammate_sync.cli`,
+//      so the daemon, MCP, slash commands, and dashboard daemon-control all
+//      dispatch through the bundled runtime — no system pipx install needed.
+//   3. Spawn the dashboard server headless (`dashboard --serve-only`), read the
+//      port it prints, and load it in a BrowserWindow.
+//   4. Tray icon with quick actions (show, start/stop daemon, install CLI
+//      integration, quit).
+//
+// The dashboard SPA (sidebar nav + 5 panels) is served by Python and rendered
+// here — we reuse 100% of the existing dashboard.py web UI.
+
+const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage } = require('electron');
+const { spawn, spawnSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+let mainWindow = null;
+let tray = null;
+let serveProc = null;
+let dashboardUrl = null;
+
+// ─── Python + shim resolution ──────────────────────────────────────────────
+
+function resolvePython() {
+  if (app.isPackaged) {
+    const base = path.join(process.resourcesPath, 'python-runtime');
+    if (process.platform === 'win32') {
+      return path.join(base, 'python.exe');
+    }
+    return path.join(base, 'bin', 'python3');
+  }
+  // Dev: explicit override, else a venv next to the repo, else system python3.
+  if (process.env.TEAMMATE_SYNC_DEV_PYTHON) {
+    return process.env.TEAMMATE_SYNC_DEV_PYTHON;
+  }
+  // Common dev location: the pipx venv on this machine.
+  const pipxPy = path.join(
+    os.homedir(), '.local', 'pipx', 'venvs', 'teammate-sync', 'bin', 'python'
+  );
+  if (fs.existsSync(pipxPy)) return pipxPy;
+  return 'python3';
+}
+
+// Write a shim that execs `<python> -m teammate_sync.cli "$@"`. All of the
+// product's subprocess dispatch (daemon up/down, slash commands) goes through
+// TEAMMATE_SYNC_BIN, which we point at this shim.
+function writeShim(python) {
+  const dir = app.getPath('userData');
+  fs.mkdirSync(dir, { recursive: true });
+  if (process.platform === 'win32') {
+    const shim = path.join(dir, 'teammate-sync.cmd');
+    fs.writeFileSync(shim, `@echo off\r\n"${python}" -m teammate_sync.cli %*\r\n`);
+    return shim;
+  }
+  const shim = path.join(dir, 'teammate-sync');
+  fs.writeFileSync(shim, `#!/bin/sh\nexec "${python}" -m teammate_sync.cli "$@"\n`);
+  fs.chmodSync(shim, 0o755);
+  return shim;
+}
+
+function childEnv() {
+  return {
+    ...process.env,
+    TEAMMATE_SYNC_BIN: process.env.TEAMMATE_SYNC_BIN || globalShim,
+  };
+}
+
+let globalShim = null;
+let pythonPath = null;
+
+// ─── Dashboard server lifecycle ────────────────────────────────────────────
+
+function startDashboardServer() {
+  return new Promise((resolve, reject) => {
+    const args = ['-m', 'teammate_sync.cli', 'dashboard', '--serve-only'];
+    serveProc = spawn(pythonPath, args, { env: childEnv() });
+
+    let buffered = '';
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('Dashboard server did not report a port within 20s.'));
+      }
+    }, 20000);
+
+    serveProc.stdout.on('data', (data) => {
+      buffered += data.toString();
+      // Each line may be JSON: {"port": N, "url": "..."} or {"error": "..."}
+      let nl;
+      while ((nl = buffered.indexOf('\n')) >= 0) {
+        const line = buffered.slice(0, nl).trim();
+        buffered = buffered.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.error && !settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(new Error(obj.error));
+            return;
+          }
+          if (obj.url && !settled) {
+            settled = true;
+            clearTimeout(timeout);
+            resolve(obj.url);
+            return;
+          }
+        } catch (_) {
+          // Non-JSON log line; ignore.
+        }
+      }
+    });
+
+    serveProc.stderr.on('data', (d) => {
+      process.stderr.write(`[dashboard] ${d}`);
+    });
+
+    serveProc.on('exit', (code) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        reject(new Error(`Dashboard server exited early (code ${code}). Have you run sign-in / init yet?`));
+      }
+    });
+  });
+}
+
+function stopDashboardServer() {
+  if (serveProc && !serveProc.killed) {
+    try { serveProc.kill('SIGTERM'); } catch (_) {}
+  }
+  serveProc = null;
+}
+
+// ─── Daemon control (via shim) ─────────────────────────────────────────────
+
+function runShim(args) {
+  return spawnSync(globalShim, args, { env: childEnv(), encoding: 'utf8' });
+}
+
+function daemonStatus() {
+  // Reads the pid file the same way the CLI does.
+  const pidFile = path.join(os.homedir(), '.teammate-sync', 'state', 'daemon.pid');
+  if (!fs.existsSync(pidFile)) return false;
+  try {
+    const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+    process.kill(pid, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ─── Window + tray ─────────────────────────────────────────────────────────
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1100,
+    height: 720,
+    minWidth: 880,
+    minHeight: 560,
+    title: 'teammate-sync',
+    backgroundColor: '#0e0e10',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (dashboardUrl) {
+    mainWindow.loadURL(dashboardUrl);
+  }
+
+  mainWindow.on('close', (e) => {
+    // Hide instead of quit (keeps daemon + tray alive), unless really quitting.
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+}
+
+function showWindow() {
+  if (!mainWindow) {
+    createWindow();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+}
+
+function buildTrayMenu() {
+  const up = daemonStatus();
+  return Menu.buildFromTemplate([
+    { label: up ? '● daemon running' : '— daemon stopped', enabled: false },
+    { type: 'separator' },
+    { label: 'Open teammate-sync', click: showWindow },
+    {
+      label: up ? 'Stop daemon' : 'Start daemon',
+      click: () => {
+        runShim([up ? 'down' : 'up']);
+        refreshTray();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Install CLI integration…',
+      click: installCliIntegration,
+    },
+    {
+      label: 'Sign in / init…',
+      click: () => {
+        // init is interactive (browser OAuth + org pick). Run in a terminal.
+        openInitInTerminal();
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit teammate-sync', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+}
+
+function refreshTray() {
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+function createTray() {
+  // Use a template image so macOS renders it correctly in light/dark menu bar.
+  let img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'));
+  if (img.isEmpty()) {
+    // Fallback: a tiny generated dot so the app still works without an icon asset.
+    img = nativeImage.createEmpty();
+  } else if (process.platform === 'darwin') {
+    img.setTemplateImage(true);
+  }
+  tray = new Tray(img);
+  tray.setToolTip('teammate-sync');
+  tray.setContextMenu(buildTrayMenu());
+  tray.on('click', showWindow);
+}
+
+// ─── CLI integration + init ────────────────────────────────────────────────
+
+// Installs a `teammate-sync` shim onto the user's PATH (~/.local/bin), so
+// Claude Code's slash commands, hooks, and MCP server can find it even though
+// the real runtime is bundled inside this .app.
+function installCliIntegration() {
+  try {
+    const binDir = path.join(os.homedir(), '.local', 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const target = path.join(binDir, 'teammate-sync');
+    if (process.platform === 'win32') {
+      // On Windows we'd add a .cmd to a dir on PATH; left as a follow-up.
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        message: 'Windows CLI integration is coming soon. For now use: pipx install teammate-sync',
+      });
+      return;
+    }
+    fs.writeFileSync(target, `#!/bin/sh\nexec "${pythonPath}" -m teammate_sync.cli "$@"\n`);
+    fs.chmodSync(target, 0o755);
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: 'CLI integration installed.',
+      detail: `Wrote ${target}\n\nMake sure ~/.local/bin is on your PATH, then run "Sign in / init" to wire up Claude Code (hooks, MCP, slash commands).`,
+    });
+  } catch (e) {
+    dialog.showErrorBox('teammate-sync', `Could not install CLI integration: ${e.message}`);
+  }
+}
+
+function openInitInTerminal() {
+  if (process.platform === 'darwin') {
+    const cmd = `"${pythonPath}" -m teammate_sync.cli init`;
+    const script = `tell application "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"\ntell application "Terminal" to activate`;
+    spawn('osascript', ['-e', script]);
+  } else {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: 'Run sign-in from a terminal:',
+      detail: `${pythonPath} -m teammate_sync.cli init`,
+    });
+  }
+}
+
+// ─── App lifecycle ─────────────────────────────────────────────────────────
+
+app.on('ready', async () => {
+  if (process.platform === 'darwin') app.dock?.show();
+
+  pythonPath = resolvePython();
+  globalShim = writeShim(pythonPath);
+
+  createTray();
+
+  try {
+    dashboardUrl = await startDashboardServer();
+    createWindow();
+    refreshTray();
+  } catch (e) {
+    // Most common cause: user hasn't signed in yet (no auth.json).
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      buttons: ['Sign in now', 'Quit'],
+      defaultId: 0,
+      message: 'teammate-sync needs to be set up.',
+      detail: `${e.message}\n\nClick "Sign in now" to authenticate with GitHub and configure your workspace.`,
+    });
+    if (choice === 0) {
+      installCliIntegration();
+      openInitInTerminal();
+    }
+    // Keep the tray alive so the user can retry after init.
+  }
+
+  // Periodically refresh tray daemon status.
+  setInterval(refreshTray, 5000);
+});
+
+app.on('window-all-closed', () => {
+  // Stay alive in the tray (don't quit) — this is a background-ish app.
+});
+
+app.on('activate', () => {
+  showWindow();
+});
+
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  stopDashboardServer();
+});
