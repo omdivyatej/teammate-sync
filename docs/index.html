@@ -227,6 +227,45 @@
       color: var(--text);
     }
 
+    /* Install — two tracks */
+    .install-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    @media (max-width: 640px) { .install-grid { grid-template-columns: 1fr; } }
+    .track {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.4rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+    }
+    .track h3 { font-size: 1.15rem; }
+    .track p { color: var(--text-dim); }
+    .track .btn { align-self: flex-start; }
+    .track-tag {
+      display: inline-block;
+      align-self: flex-start;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.6rem;
+      border-radius: 5px;
+      background: rgba(198,242,63,0.13);
+      color: var(--accent);
+      border: 1px solid rgba(198,242,63,0.3);
+    }
+    .track-tag.alt {
+      background: rgba(66,99,255,0.14);
+      color: var(--user-color);
+      border-color: rgba(66,99,255,0.35);
+    }
+    .track .terminal { font-size: 0.8rem; }
+
     /* FAQ */
     .faq-item {
       border-top: 1px solid var(--border);
@@ -523,52 +562,50 @@
   <!-- INSTALL -->
   <section id="install">
     <h2>Install</h2>
-    <p>
-      One PyPI package, one binary, three commands. Works on any machine
-      where Claude Code already runs.
-    </p>
+    <p>Two ways in. Pick your lane.</p>
 
-    <div class="terminal">
-      <div class="title-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">your terminal</span>
+    <div class="install-grid">
+      <!-- Track 1: desktop app -->
+      <div class="track">
+        <div class="track-tag">For everyone</div>
+        <h3 style="margin-top:0.4rem;">Desktop app</h3>
+        <p style="font-size:0.92rem;">
+          Download, drag to Applications, sign in. The app runs sync in the
+          background and gives you a dashboard. Bundles everything — no Python,
+          no terminal.
+        </p>
+        <a href="https://github.com/omdivyatej/teammate-sync/releases/download/desktop-v0.6.0/CodeBaton-0.6.0-arm64.dmg"
+           class="btn btn-primary" style="margin-top:0.5rem;">Download for Mac ↓</a>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;">
+          Apple Silicon · beta · unsigned (right-click → Open). Intel + Windows soon.
+        </p>
       </div>
-<pre>
-<span class="cmt"># Prereq: pipx (one-time, if you don't already have it)</span>
-<span class="prompt">❯</span> brew install pipx <span class="cmt">&&</span> pipx ensurepath
 
-<span class="cmt"># 1. Install the binary (~15s)</span>
-<span class="prompt">❯</span> pipx install teammate-sync
-
-<span class="cmt"># 2. Sign in with GitHub, wire up hooks / MCP / slash commands (~1 min)</span>
-<span class="prompt">❯</span> teammate-sync init
-
-<span class="cmt"># 3. Start the sync daemon — backgrounded, no terminal to babysit</span>
-<span class="prompt">❯</span> teammate-sync up
-<span class="good">✓ daemon up (pid 12345)</span>
-<span class="cmt">  logs:      teammate-sync logs</span>
-<span class="cmt">  dashboard: teammate-sync dashboard</span>
-<span class="cmt">  stop:      teammate-sync down</span>
-</pre>
+      <!-- Track 2: CLI / pipx -->
+      <div class="track">
+        <div class="track-tag alt">For terminal-first devs</div>
+        <h3 style="margin-top:0.4rem;">CLI</h3>
+        <p style="font-size:0.92rem;">
+          Live in the terminal? Skip the GUI entirely. One package, a few
+          commands, done. Same engine the app runs under the hood.
+        </p>
+        <div class="terminal" style="margin:0.5rem 0 0;">
+<pre><span class="prompt">❯</span> pipx install teammate-sync
+<span class="prompt">❯</span> teammate-sync init   <span class="cmt"># GitHub sign-in</span>
+<span class="prompt">❯</span> teammate-sync up     <span class="cmt"># background daemon</span></pre>
+        </div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;">
+          macOS · Linux · Windows. Needs <a href="https://pipx.pypa.io">pipx</a> + Python 3.11+.
+        </p>
+      </div>
     </div>
 
-    <p style="margin-top: 1.5rem; font-size: 0.95rem; color: var(--text-muted);">
-      That's it. Restart any open Claude Code sessions so they pick up the
-      new hooks + MCP, then type <code>/connect &lt;teammate-handle&gt;</code>
-      in any session. When they <code>/connect &lt;your-handle&gt;</code> back,
-      content starts flowing. Then <code>/ask &lt;handle&gt; &lt;question&gt;</code>
-      from either side. Four slash commands, that's the whole surface.
-      Audit anytime with <code>teammate-sync dashboard</code>. Full walkthrough:
+    <p style="margin-top: 1.75rem; font-size: 0.95rem; color: var(--text-muted);">
+      Either way: restart Claude Code, then <code>/connect &lt;teammate&gt;</code>.
+      When they <code>/connect &lt;you&gt;</code> back, context flows. Ask anything
+      with <code>/ask &lt;teammate&gt; &lt;question&gt;</code>. Four slash commands,
+      that's the whole surface. Full walkthrough:
       <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md">INSTALL.md</a>.
-    </p>
-
-    <p style="font-size: 0.9rem; color: var(--text-muted);">
-      Requires Python 3.11+, Claude Code CLI, and an Anthropic API key
-      (you'll paste it once during <code>init</code>, no shell env vars).
-      Works on macOS and Linux. Why pipx instead of pip:
-      <a href="https://github.com/omdivyatej/teammate-sync/blob/main/INSTALL.md#1-install-15s">PEP 668</a>
-      blocks plain pip on modern Python; pipx gives the binary its own
-      isolated venv automatically.
     </p>
   </section>
 
