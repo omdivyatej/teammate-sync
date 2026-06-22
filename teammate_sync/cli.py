@@ -448,7 +448,14 @@ def cmd_disconnect(args) -> int:
 
 def cmd_dashboard(args) -> int:
     from . import dashboard as _dashboard
-    return _dashboard.run_dashboard(port=args.port, open_browser=not args.no_browser)
+    use_window = None
+    if args.browser:
+        use_window = False
+    return _dashboard.run_dashboard(
+        port=args.port,
+        open_browser=not args.no_browser,
+        use_window=use_window,
+    )
 
 
 def cmd_shared(args) -> int:
@@ -801,13 +808,15 @@ def main() -> int:
     # ── Dashboard ──
     p_dash = sub.add_parser(
         "dashboard",
-        help="Launch a localhost web dashboard showing all your sessions, "
-             "teammate sessions, and pending invites side-by-side.",
+        help="Launch the desktop dashboard (native window via pywebview "
+             "if available, browser otherwise).",
     )
     p_dash.add_argument("--port", type=int, default=None,
                         help="Port to bind. Default: pick a free one.")
     p_dash.add_argument("--no-browser", action="store_true",
-                        help="Don't automatically open the browser.")
+                        help="When falling back to browser mode, don't auto-open it.")
+    p_dash.add_argument("--browser", action="store_true",
+                        help="Force browser mode (skip pywebview native window).")
     p_dash.set_defaults(func=cmd_dashboard)
 
     # ── Foreground daemon (kept for `teammate-sync up` to invoke + power users) ──
