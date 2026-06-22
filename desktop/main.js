@@ -169,9 +169,12 @@ function createWindow() {
     height: 720,
     minWidth: 880,
     minHeight: 560,
-    title: 'teammate-sync',
-    backgroundColor: '#0e0e10',
+    title: 'CodeBaton',
+    backgroundColor: '#14110d',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    icon: process.platform === 'linux'
+      ? path.join(__dirname, 'assets', 'icon.png')
+      : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -206,7 +209,7 @@ function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: up ? '● daemon running' : '— daemon stopped', enabled: false },
     { type: 'separator' },
-    { label: 'Open teammate-sync', click: showWindow },
+    { label: 'Open CodeBaton', click: showWindow },
     {
       label: up ? 'Stop daemon' : 'Start daemon',
       click: () => {
@@ -227,7 +230,7 @@ function buildTrayMenu() {
       },
     },
     { type: 'separator' },
-    { label: 'Quit teammate-sync', click: () => { app.isQuitting = true; app.quit(); } },
+    { label: 'Quit CodeBaton', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
 }
 
@@ -245,7 +248,7 @@ function createTray() {
     img.setTemplateImage(true);
   }
   tray = new Tray(img);
-  tray.setToolTip('teammate-sync');
+  tray.setToolTip('CodeBaton');
   tray.setContextMenu(buildTrayMenu());
   tray.on('click', showWindow);
 }

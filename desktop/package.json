@@ -19,8 +19,8 @@
   },
   "build": {
     "extends": null,
-    "appId": "ai.turgon.teammate-sync",
-    "productName": "teammate-sync",
+    "appId": "dev.codebaton.app",
+    "productName": "CodeBaton",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -59,7 +59,7 @@
       "icon": "assets/icon.png"
     },
     "dmg": {
-      "title": "teammate-sync",
+      "title": "CodeBaton",
       "contents": [
         { "x": 130, "y": 220 },
         { "x": 410, "y": 220, "type": "link", "path": "/Applications" }

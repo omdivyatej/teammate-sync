@@ -178,798 +178,516 @@ _INDEX_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>teammate-sync</title>
+<title>CodeBaton</title>
 <style>
   :root {
-    --bg: #0e0e10;
-    --bg-elev: #18181b;
-    --bg-elev-2: #1f1f23;
-    --border: #2a2a2e;
-    --border-strong: #3a3a3f;
-    --text: #ececee;
-    --text-dim: #a6a6ac;
-    --text-muted: #6e6e74;
-    --accent: #7dd3fc;
-    --accent-strong: #38bdf8;
-    --good: #86efac;
-    --warn: #fbbf24;
-    --bad: #fca5a5;
-    --bad-strong: #ef4444;
+    /* warm-tinted neutrals — tinted toward the ember brand hue, never pure gray */
+    --bg:         #14110d;
+    --bg-elev:    #1c1813;
+    --bg-elev-2:  #241f18;
+    --bg-sink:    #0d0b08;
+    --border:     #2c261d;
+    --border-2:   #3a3225;
+    --text:       #f2ece2;
+    --text-dim:   #b6ab9b;
+    --text-muted: #7e7466;
+    /* ember brand */
+    --ember:      #ff8d3e;
+    --ember-2:    #ffb15a;
+    --ember-deep: #d8451c;
+    --ember-soft: rgba(255,141,62,0.12);
+    --ember-line: rgba(255,141,62,0.30);
+    --danger:     #f0795f;
+    --danger-deep:#7f2418;
+    --radius:     11px;
+    --radius-sm:  7px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
-    font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
-          "Inter", "Segoe UI", Roboto, sans-serif;
+    font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
     color: var(--text);
     background: var(--bg);
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: 232px 1fr;
     grid-template-rows: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
+  ::selection { background: var(--ember-soft); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2c261d; border-radius: 6px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3225; }
 
-  /* SIDEBAR */
+  /* ── SIDEBAR ───────────────────────────────────────────── */
   .sidebar {
-    background: var(--bg-elev);
+    background: linear-gradient(180deg, #1a1610 0%, #14110d 100%);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    padding: 1rem 0;
+    -webkit-app-region: drag;            /* draggable window chrome */
+    padding-top: env(titlebar-area-height, 28px);
   }
   .brand {
-    padding: 0 1.25rem 1.25rem 1.25rem;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px 16px;
   }
-  .brand .logo {
-    font-size: 1.05rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text);
+  .brand .mark { width: 26px; height: 26px; flex: none; }
+  .brand .name {
+    font-size: 15px; font-weight: 650; letter-spacing: -0.015em; color: var(--text);
   }
-  .brand .sub {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-  }
-  .nav {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.25rem 0.5rem;
-  }
+  .brand .name b { color: var(--ember); font-weight: 650; }
+  .nav { flex: 1; padding: 6px 10px; -webkit-app-region: no-drag; }
   .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.55rem 0.75rem;
-    margin: 0.1rem 0;
-    border-radius: 6px;
-    font-size: 0.9rem;
-    color: var(--text-dim);
-    cursor: pointer;
-    user-select: none;
+    display: flex; align-items: center; gap: 11px;
+    padding: 8px 11px; margin: 2px 0;
+    border-radius: var(--radius-sm);
+    font-size: 13.5px; color: var(--text-dim);
+    cursor: pointer; user-select: none;
+    position: relative;
+    transition: background .14s ease, color .14s ease;
   }
-  .nav-item:hover { background: var(--bg-elev-2); color: var(--text); }
-  .nav-item.active {
-    background: var(--bg-elev-2);
-    color: var(--text);
-    box-shadow: inset 2px 0 0 var(--accent);
+  .nav-item:hover { background: var(--bg-elev); color: var(--text); }
+  .nav-item.active { background: var(--bg-elev-2); color: var(--text); }
+  .nav-item.active::before {
+    content: ""; position: absolute; left: -10px; top: 7px; bottom: 7px;
+    width: 3px; border-radius: 3px;
+    background: linear-gradient(180deg, var(--ember-2), var(--ember-deep));
   }
-  .nav-item .badge {
-    margin-left: auto;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    padding: 1px 6px;
-    border-radius: 999px;
+  .nav-item .ico { width: 16px; height: 16px; flex: none; opacity: .85; }
+  .nav-item .count {
+    margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
+    color: var(--text-muted); background: var(--bg-sink);
+    border: 1px solid var(--border); padding: 0 7px; border-radius: 999px; line-height: 18px;
   }
-  .sidebar-foot {
-    padding: 0.75rem 1.25rem;
-    border-top: 1px solid var(--border);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .nav-item.active .count { color: var(--ember); border-color: var(--ember-line); }
+  .sidefoot {
+    -webkit-app-region: no-drag;
+    padding: 11px 18px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 9px;
+    font-size: 12px; color: var(--text-muted);
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.good { background: var(--good); }
-  .dot.bad { background: var(--bad-strong); }
-  .dot.idle { background: var(--text-muted); }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: none; }
+  .live-dot.on  { background: var(--ember); box-shadow: 0 0 0 0 var(--ember-line); animation: pulse 2.4s infinite; }
+  .live-dot.off { background: #4a4136; }
+  .live-dot.err { background: var(--danger); }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255,141,62,0.35); }
+    70%  { box-shadow: 0 0 0 7px rgba(255,141,62,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,141,62,0); }
+  }
 
-  /* MAIN AREA */
-  main {
-    overflow-y: auto;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
+  /* ── MAIN ──────────────────────────────────────────────── */
+  main { overflow: hidden; display: flex; flex-direction: column; }
   .topbar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.9rem 1.75rem;
+    -webkit-app-region: drag;
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 0 26px; height: calc(48px + env(titlebar-area-height, 0px));
+    padding-top: env(titlebar-area-height, 0px);
     border-bottom: 1px solid var(--border);
     background: var(--bg);
-    position: sticky;
-    top: 0;
-    z-index: 10;
   }
-  .topbar .handle {
-    font-family: ui-monospace, SFMono-Regular, monospace;
-    color: var(--accent);
-    font-size: 0.9rem;
-  }
-  .topbar .workspace {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-  }
-  .topbar .freshness {
-    margin-left: auto;
-    color: var(--text-muted);
-    font-size: 0.8rem;
-  }
-  .panel {
-    padding: 1.5rem 1.75rem;
-    flex: 1;
-  }
-  .panel-title {
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
-    margin: 0 0 0.85rem 0;
-  }
-  .section-title {
-    font-size: 0.72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    color: var(--text-muted);
-    margin: 1.75rem 0 0.6rem 0;
-  }
-  .section-title:first-child { margin-top: 0; }
+  .topbar .handle { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .topbar .ws { color: var(--text-muted); font-size: 12.5px; }
+  .topbar .spacer { flex: 1; }
+  .topbar .fresh { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .panel { flex: 1; overflow-y: auto; padding: 26px; animation: rise .4s cubic-bezier(.2,.7,.2,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .ptitle { font-size: 19px; font-weight: 640; letter-spacing: -0.02em; margin: 0 0 2px; }
+  .psub { color: var(--text-muted); font-size: 13px; margin: 0 0 22px; }
+  .label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.09em;
+           color: var(--text-muted); margin: 26px 0 11px; }
+  .label:first-of-type { margin-top: 4px; }
 
-  /* CARDS */
-  .card {
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem 1.15rem;
-    margin-bottom: 0.6rem;
-  }
-  .card .row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  .card .grow { flex: 1; min-width: 0; }
-  .card .id {
-    font-family: ui-monospace, SFMono-Regular, monospace;
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    word-break: break-all;
-  }
-  .card .meta {
-    font-size: 0.82rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-  }
-  .card .strong { color: var(--text); font-weight: 500; }
-
-  /* STAT GRID */
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 0.6rem;
-    margin-bottom: 1.5rem;
-  }
+  /* ── STATUS hero stats ─────────────────────────────────── */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px; }
+  @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
   .stat {
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.85rem 1rem;
+    background: linear-gradient(180deg, var(--bg-elev) 0%, #181410 100%);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 15px 16px;
   }
-  .stat-num {
-    font-size: 1.4rem;
-    font-weight: 600;
-    color: var(--text);
-    line-height: 1.2;
-  }
-  .stat-label {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    margin-top: 0.3rem;
-  }
+  .stat .n { font-size: 28px; font-weight: 660; letter-spacing: -0.03em; line-height: 1;
+             font-variant-numeric: tabular-nums; }
+  .stat.accent .n { color: var(--ember); }
+  .stat .l { font-size: 11.5px; color: var(--text-muted); margin-top: 9px;
+             text-transform: uppercase; letter-spacing: 0.06em; }
 
-  /* PILLS + BUTTONS */
-  .pill {
-    display: inline-block;
-    padding: 1px 8px;
-    font-size: 0.78rem;
-    font-family: ui-monospace, monospace;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--accent);
-    margin: 1px 3px 1px 0;
+  /* ── daemon control bar ────────────────────────────────── */
+  .daemon {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 15px 17px; margin-top: 14px;
   }
-  .pill.warn { color: var(--warn); border-color: #92400e; background: #1c1917; }
-  .pill.bad { color: var(--bad-strong); border-color: #7f1d1d; background: #1c1010; }
-  .pill.good { color: var(--good); border-color: #14532d; background: #0a1f12; }
-  button, .btn {
-    background: var(--bg-elev-2);
-    color: var(--accent);
-    border: 1px solid var(--border-strong);
-    border-radius: 5px;
-    padding: 0.35rem 0.75rem;
-    font: inherit;
-    font-size: 0.85rem;
-    cursor: pointer;
-    margin-right: 0.3rem;
+  .daemon .state { display: flex; align-items: center; gap: 10px; }
+  .daemon .state .txt { font-weight: 560; }
+  .daemon .meta { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
+  .daemon .grow { flex: 1; }
+
+  /* ── cards ─────────────────────────────────────────────── */
+  .card {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 13px 15px; margin-bottom: 9px;
+    transition: border-color .14s ease;
   }
-  button:hover, .btn:hover { background: var(--border); color: var(--text); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .card:hover { border-color: var(--border-2); }
+  .crow { display: flex; align-items: center; gap: 12px; }
+  .crow .grow { flex: 1; min-width: 0; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 9px; flex: none;
+    display: grid; place-items: center; font-weight: 640; font-size: 13px;
+    color: var(--ember-2);
+    background: var(--ember-soft); border: 1px solid var(--ember-line);
+  }
+  .who { font-weight: 560; font-size: 13.5px; }
+  .sub { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+          font-size: 12px; color: var(--text-dim); word-break: break-all; }
+
+  /* ── pills ─────────────────────────────────────────────── */
+  .pill { display: inline-flex; align-items: center; gap: 5px;
+          padding: 2px 9px; font-size: 12px; border-radius: 999px;
+          background: var(--bg-elev-2); border: 1px solid var(--border);
+          color: var(--ember-2); margin: 2px 4px 2px 0; }
+  .pill.ember { color: var(--ember); border-color: var(--ember-line); background: var(--ember-soft); }
+  .pill.muted { color: var(--text-muted); }
+  .pill.bad { color: var(--danger); border-color: var(--danger-deep); background: rgba(240,121,95,0.08); }
+  .pill .d { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ── buttons ───────────────────────────────────────────── */
+  button {
+    font: inherit; font-size: 12.5px; font-weight: 520;
+    padding: 6px 13px; border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--bg-elev-2); color: var(--text-dim);
+    border: 1px solid var(--border-2);
+    transition: background .13s, color .13s, border-color .13s, transform .06s;
+  }
+  button:hover { background: #2c261d; color: var(--text); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .38; cursor: not-allowed; }
   button.primary {
-    background: var(--accent-strong);
-    color: #0c0c0e;
-    border-color: var(--accent-strong);
-    font-weight: 500;
+    background: linear-gradient(180deg, var(--ember) 0%, var(--ember-deep) 100%);
+    color: #1a0f07; border: none; font-weight: 600;
   }
-  button.primary:hover { background: var(--accent); }
-  button.danger {
-    color: var(--bad);
-    border-color: #7f1d1d;
-  }
-  button.danger:hover { background: #1c1010; color: var(--bad-strong); }
-  button.ghost {
-    background: transparent;
-    color: var(--text-muted);
-    border-color: var(--border);
-  }
+  button.primary:hover { filter: brightness(1.07); background: linear-gradient(180deg, var(--ember-2), var(--ember)); }
+  button.danger { color: var(--danger); border-color: var(--danger-deep); }
+  button.danger:hover { background: rgba(240,121,95,0.1); color: #ff9883; }
+  button.ghost { background: transparent; border-color: var(--border); }
 
-  /* LOGS */
+  /* ── logs ──────────────────────────────────────────────── */
   pre.logs {
-    background: #08080a;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem 1.1rem;
-    font-family: ui-monospace, SFMono-Regular, monospace;
-    font-size: 0.78rem;
-    line-height: 1.55;
-    color: var(--text-dim);
-    overflow: auto;
-    max-height: calc(100vh - 220px);
-    white-space: pre-wrap;
-    word-break: break-all;
-    margin: 0;
+    background: var(--bg-sink); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; margin: 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+    font-size: 12px; line-height: 1.65; color: var(--text-dim);
+    overflow: auto; white-space: pre-wrap; word-break: break-all;
   }
+  .logs .ember { color: var(--ember); }
 
-  /* DETAILS (dump previews) */
-  details {
-    margin-top: 0.6rem;
-    background: #08080a;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-  }
-  details summary {
-    cursor: pointer;
-    padding: 0.5rem 0.85rem;
-    color: var(--text-muted);
-    font-size: 0.82rem;
-    user-select: none;
-  }
-  details pre {
-    margin: 0;
-    padding: 0.7rem 0.9rem;
-    border-top: 1px solid var(--border);
-    font-family: ui-monospace, monospace;
-    font-size: 0.76rem;
-    color: var(--text-dim);
-    max-height: 400px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
+  /* ── details (raw dump) ────────────────────────────────── */
+  details { margin-top: 10px; background: var(--bg-sink); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  details summary { cursor: pointer; padding: 8px 13px; color: var(--text-muted); font-size: 12.5px; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "▸ "; color: var(--ember); }
+  details[open] summary::before { content: "▾ "; }
+  details pre { margin: 0; padding: 11px 13px; border-top: 1px solid var(--border);
+                font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text-dim);
+                max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
-  /* SETTINGS */
-  .setting-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.85rem 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .setting-row:last-child { border-bottom: none; }
-  .setting-row .label {
-    flex: 1;
-  }
-  .setting-row .label .name { font-size: 0.92rem; color: var(--text); }
-  .setting-row .label .desc { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem; }
+  /* ── settings rows ─────────────────────────────────────── */
+  .srow { display: flex; align-items: center; gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--border); }
+  .srow:last-child { border-bottom: none; }
+  .srow .grow { flex: 1; }
+  .srow .nm { font-size: 13.5px; }
+  .srow .ds { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; max-width: 52ch; }
 
-  /* EMPTY STATES */
-  .empty {
-    color: var(--text-muted);
-    font-style: italic;
-    padding: 0.85rem 1rem;
-    background: var(--bg-elev);
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    font-size: 0.85rem;
-  }
+  /* iOS-style toggle */
+  .toggle { position: relative; width: 42px; height: 25px; flex: none; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .track { position: absolute; inset: 0; border-radius: 999px;
+                   background: #322b21; border: 1px solid var(--border-2); transition: .18s; }
+  .toggle .track::after { content: ""; position: absolute; left: 3px; top: 3px;
+                   width: 17px; height: 17px; border-radius: 50%; background: #b6ab9b; transition: .18s cubic-bezier(.3,.8,.3,1); }
+  .toggle input:checked + .track { background: linear-gradient(180deg, var(--ember), var(--ember-deep)); border-color: transparent; }
+  .toggle input:checked + .track::after { transform: translateX(17px); background: #1a0f07; }
 
-  .err {
-    color: var(--bad-strong);
-    padding: 1rem;
-    border: 1px solid #7f1d1d;
-    border-radius: 6px;
-    background: #1c1010;
-  }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.85rem;
-  }
-  .toolbar .grow { flex: 1; }
-  input[type="checkbox"] {
-    accent-color: var(--accent-strong);
-    transform: scale(1.15);
-    margin: 0;
-  }
+  /* ── empty states ──────────────────────────────────────── */
+  .empty { padding: 26px 20px; text-align: center; border: 1px dashed var(--border-2);
+           border-radius: var(--radius); color: var(--text-muted); }
+  .empty .em-mark { opacity: .5; margin-bottom: 12px; }
+  .empty .em-t { color: var(--text-dim); font-size: 13.5px; }
+  .empty .em-d { font-size: 12.5px; margin-top: 5px; }
+  .empty code { background: var(--bg-sink); border: 1px solid var(--border);
+                padding: 1px 6px; border-radius: 5px; color: var(--ember-2);
+                font-family: ui-monospace, monospace; font-size: 12px; }
+
+  .group-h { font-size: 13.5px; font-weight: 600; margin: 0 0 8px; display: flex; align-items: center; gap: 9px; }
+  .err-box { color: var(--danger); padding: 16px; border: 1px solid var(--danger-deep);
+             border-radius: var(--radius); background: rgba(240,121,95,0.06); }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<aside class="sidebar">
   <div class="brand">
-    <div class="logo">teammate-sync</div>
-    <div class="sub" id="brand-version">v0.6</div>
+    <svg class="mark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="13" y1="32" x2="23" y2="13" stroke="#d8451c" stroke-width="6.5" stroke-linecap="round"/>
+      <line x1="23" y1="31" x2="33" y2="12" stroke="#ff9a4a" stroke-width="6.5" stroke-linecap="round"/>
+      <circle cx="33" cy="12" r="3.4" fill="#ffe9d2"/>
+    </svg>
+    <div class="name">Code<b>Baton</b></div>
   </div>
-  <div class="nav">
-    <div class="nav-item active" data-panel="status">Status</div>
-    <div class="nav-item" data-panel="connections">
-      Connections
-      <span class="badge" id="badge-connections">0</span>
-    </div>
+
+  <nav class="nav" id="nav">
+    <div class="nav-item active" data-panel="status">Overview</div>
+    <div class="nav-item" data-panel="connections">Connections<span class="count" id="c-conn">0</span></div>
     <div class="nav-item" data-panel="sessions">Sessions</div>
-    <div class="nav-item" data-panel="logs">Logs</div>
+    <div class="nav-item" data-panel="logs">Activity</div>
     <div class="nav-item" data-panel="settings">Settings</div>
-  </div>
-  <div class="sidebar-foot">
-    <span class="dot idle" id="foot-dot"></span>
+  </nav>
+
+  <div class="sidefoot">
+    <span class="live-dot off" id="foot-dot"></span>
     <span id="foot-text">connecting…</span>
   </div>
-</div>
+</aside>
 
 <main>
   <div class="topbar">
-    <span class="handle" id="top-handle">@…</span>
-    <span class="workspace" id="top-workspace"></span>
-    <span class="freshness" id="top-freshness"></span>
+    <span class="handle" id="t-handle">@…</span>
+    <span class="ws" id="t-ws"></span>
+    <span class="spacer"></span>
+    <span class="fresh" id="t-fresh"></span>
   </div>
 
-  <!-- STATUS -->
-  <div class="panel" id="panel-status">
-    <h2 class="panel-title">Status</h2>
-    <div class="stat-grid" id="stat-grid"></div>
-    <div class="card" id="daemon-card">
-      <div class="row">
-        <div class="grow">
-          <div class="strong" id="daemon-state">…</div>
-          <div class="meta" id="daemon-meta"></div>
+  <!-- OVERVIEW -->
+  <section class="panel" id="p-status">
+    <h1 class="ptitle">Overview</h1>
+    <p class="psub">Your live sharing state at a glance.</p>
+    <div class="stats" id="stats"></div>
+    <div class="daemon" id="daemon">
+      <div class="state">
+        <span class="live-dot off" id="d-dot"></span>
+        <div>
+          <div class="txt" id="d-txt">…</div>
+          <div class="meta" id="d-meta"></div>
         </div>
-        <button class="primary" id="btn-start" onclick="postAction('/daemon/start')">Start daemon</button>
-        <button class="danger" id="btn-stop" onclick="postAction('/daemon/stop')">Stop daemon</button>
       </div>
+      <div class="grow"></div>
+      <button class="primary" id="d-start" onclick="post('/daemon/start')">Start sync</button>
+      <button class="danger" id="d-stop" onclick="post('/daemon/stop')">Stop</button>
     </div>
-    <div class="section-title">Recent activity</div>
-    <pre class="logs" id="status-logs" style="max-height: 280px;"></pre>
-  </div>
+    <div class="label">Recent activity</div>
+    <pre class="logs" id="s-logs" style="max-height: 240px;"></pre>
+  </section>
 
   <!-- CONNECTIONS -->
-  <div class="panel" id="panel-connections" style="display:none">
-    <h2 class="panel-title">Connections</h2>
-    <div class="section-title">Accepted</div>
-    <div id="conn-accepted"></div>
-    <div class="section-title">Requests you sent — awaiting their /connect</div>
-    <div id="conn-out"></div>
-    <div class="section-title">Requests to accept</div>
-    <div id="conn-in"></div>
-  </div>
+  <section class="panel hidden" id="p-connections">
+    <h1 class="ptitle">Connections</h1>
+    <p class="psub">People whose context you can ask for — and who can ask for yours.</p>
+    <div class="label">Connected</div>
+    <div id="c-accepted"></div>
+    <div class="label">Invites you sent</div>
+    <div id="c-out"></div>
+    <div class="label">Invites to you</div>
+    <div id="c-in"></div>
+  </section>
 
   <!-- SESSIONS -->
-  <div class="panel" id="panel-sessions" style="display:none">
-    <h2 class="panel-title">Sessions</h2>
-    <div class="section-title">Your shared sessions</div>
-    <div id="my-sessions"></div>
-    <div class="section-title">Sessions shared with you</div>
-    <div id="their-sessions"></div>
-  </div>
+  <section class="panel hidden" id="p-sessions">
+    <h1 class="ptitle">Sessions</h1>
+    <p class="psub">Live Claude Code context flowing between you and your team.</p>
+    <div class="label">You're sharing</div>
+    <div id="s-mine"></div>
+    <div class="label">Shared with you</div>
+    <div id="s-theirs"></div>
+  </section>
 
-  <!-- LOGS -->
-  <div class="panel" id="panel-logs" style="display:none">
-    <h2 class="panel-title">Daemon log</h2>
-    <div class="toolbar">
-      <label style="display:flex; align-items:center; gap:0.4rem; color: var(--text-dim); font-size:0.85rem;">
-        <input type="checkbox" id="logs-autorefresh" checked> auto-refresh
+  <!-- ACTIVITY / LOGS -->
+  <section class="panel hidden" id="p-logs">
+    <h1 class="ptitle">Activity</h1>
+    <p class="psub">The sync daemon's live log.</p>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <label style="display:flex; align-items:center; gap:8px; color:var(--text-dim); font-size:12.5px; cursor:pointer;">
+        <span class="toggle"><input type="checkbox" id="log-auto" checked><span class="track"></span></span>
+        auto-refresh
       </label>
-      <span class="grow"></span>
-      <button class="ghost" onclick="refreshLogs()">refresh now</button>
+      <div style="flex:1"></div>
+      <button class="ghost" onclick="refreshLogs()">refresh</button>
     </div>
-    <pre class="logs" id="logs-output"></pre>
-  </div>
+    <pre class="logs" id="logs-out" style="max-height: calc(100vh - 230px);"></pre>
+  </section>
 
   <!-- SETTINGS -->
-  <div class="panel" id="panel-settings" style="display:none">
-    <h2 class="panel-title">Settings</h2>
-
-    <div class="section-title">Account</div>
+  <section class="panel hidden" id="p-settings">
+    <h1 class="ptitle">Settings</h1>
+    <p class="psub">Account and app preferences.</p>
+    <div class="label">Account</div>
     <div class="card">
-      <div class="row">
+      <div class="crow">
+        <div class="avatar" id="set-av">?</div>
         <div class="grow">
-          <div class="strong" id="settings-handle">@…</div>
-          <div class="meta" id="settings-workspace"></div>
+          <div class="who" id="set-handle">@…</div>
+          <div class="sub" id="set-ws"></div>
         </div>
       </div>
     </div>
-
-    <div class="section-title">Preferences</div>
-    <div class="card" style="padding: 0 1.15rem;">
-      <div class="setting-row">
-        <div class="label">
-          <div class="name">Notifications</div>
-          <div class="desc">macOS / Linux / Windows toast when a teammate sends a /connect request or accepts your invite.</div>
-        </div>
-        <input type="checkbox" id="settings-notifications" onchange="toggleNotifications(this.checked)">
+    <div class="label">Preferences</div>
+    <div class="srow">
+      <div class="grow">
+        <div class="nm">Notifications</div>
+        <div class="ds">Desktop alert when a teammate wants to connect, or accepts your invite.</div>
       </div>
-      <div class="setting-row">
-        <div class="label">
-          <div class="name">Auto-start at login</div>
-          <div class="desc">Launch the menu bar app automatically when you log in.</div>
-        </div>
-        <input type="checkbox" id="settings-autostart" onchange="toggleAutostart(this.checked)">
-      </div>
+      <label class="toggle"><input type="checkbox" id="set-notif" onchange="toggleNotif(this.checked)"><span class="track"></span></label>
     </div>
-  </div>
+    <div class="srow">
+      <div class="grow">
+        <div class="nm">Launch at login</div>
+        <div class="ds">Start CodeBaton automatically when you log in, so sync is always on.</div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="set-auto" onchange="toggleAuto(this.checked)"><span class="track"></span></label>
+    </div>
+  </section>
 </main>
 
 <script>
-//
-// State
-//
-let activePanel = 'status';
-let logsAutoRefreshTimer = null;
-
-//
-// Utilities
-//
 const $ = id => document.getElementById(id);
-const esc = s => (s == null ? '' : String(s).replace(/[&<>"']/g, c => ({
-  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-}[c])));
+const esc = s => (s==null?'':String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+const initial = h => (h||'?').replace(/[^a-z0-9]/ig,'').charAt(0).toUpperCase() || '?';
+function ago(ep){ if(!ep) return ''; const s=(Date.now()/1000)-ep;
+  if(s<60) return Math.max(0,Math.floor(s))+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+async function getJ(u,o){ const r=await fetch(u,{cache:'no-store',...o}); if(!r.ok) throw new Error(r.status+' '+await r.text()); return r.json(); }
 
-function timeAgo(epoch) {
-  if (!epoch) return '';
-  const sec = (Date.now() / 1000) - epoch;
-  if (sec < 60) return `${Math.floor(sec)}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  return `${Math.floor(sec / 86400)}d ago`;
+const MARK_EMPTY = `<svg class="em-mark" width="40" height="40" viewBox="0 0 44 44" fill="none">
+  <line x1="13" y1="32" x2="23" y2="13" stroke="#5a4a38" stroke-width="6.5" stroke-linecap="round"/>
+  <line x1="23" y1="31" x2="33" y2="12" stroke="#6e5a40" stroke-width="6.5" stroke-linecap="round"/></svg>`;
+const emptyBox = (t,d)=>`<div class="empty">${MARK_EMPTY}<div class="em-t">${t}</div><div class="em-d">${d}</div></div>`;
+
+let active='status', logTimer=null, last=null;
+function setPanel(n){
+  active=n;
+  ['status','connections','sessions','logs','settings'].forEach(p=>$('p-'+p).classList.toggle('hidden', p!==n));
+  document.querySelectorAll('.nav-item').forEach(e=>e.classList.toggle('active', e.dataset.panel===n));
+  if(n==='logs') refreshLogs();
+  if(n==='settings') loadSettings();
 }
+document.querySelectorAll('.nav-item').forEach(e=>e.addEventListener('click',()=>setPanel(e.dataset.panel)));
 
-async function fetchJson(url, opts = {}) {
-  const r = await fetch(url, {cache: 'no-store', ...opts});
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-  return r.json();
-}
-
-//
-// Panel switching
-//
-function setPanel(name) {
-  activePanel = name;
-  ['status', 'connections', 'sessions', 'logs', 'settings'].forEach(p => {
-    $('panel-' + p).style.display = (p === name) ? '' : 'none';
-  });
-  document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.panel === name);
-  });
-  if (name === 'logs') refreshLogs();
-  if (name === 'settings') loadSettings();
-}
-document.querySelectorAll('.nav-item').forEach(el => {
-  el.addEventListener('click', () => setPanel(el.dataset.panel));
-});
-
-//
-// Top-level poll for /data.json (dashboard snapshot)
-//
-let lastData = null;
-async function pollData() {
-  try {
-    const data = await fetchJson('/data.json');
-    lastData = data;
-    renderTopBar(data);
-    renderStatus(data);
-    renderConnections(data);
-    renderSessions(data);
-    $('foot-dot').className = 'dot good';
-    $('foot-text').textContent = 'synced ' + new Date().toLocaleTimeString();
-  } catch (e) {
-    $('foot-dot').className = 'dot bad';
-    $('foot-text').textContent = 'disconnected';
-    $('panel-status').innerHTML =
-      `<div class="err">Could not reach backend: ${esc(e.message)}</div>`;
+async function poll(){
+  try{
+    const d = await getJ('/data.json'); last=d;
+    top(d); status(d); connections(d); sessions(d);
+    $('foot-dot').className='live-dot on'; $('foot-text').textContent='synced';
+    $('t-fresh').textContent = 'updated '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(e){
+    $('foot-dot').className='live-dot err'; $('foot-text').textContent='offline';
+    $('p-status').innerHTML='<div class="err-box">Can\'t reach the backend: '+esc(e.message)+'</div>';
   }
 }
-
-function renderTopBar(data) {
-  $('top-handle').textContent = '@' + (data.me || '?');
-  $('top-workspace').textContent = data.org ? `in ${data.org}` : '';
-  $('top-freshness').textContent = 'synced ' + new Date().toLocaleTimeString();
-  $('settings-handle').textContent = '@' + (data.me || '?');
-  $('settings-workspace').textContent = data.org ? `workspace: ${data.org}` : '';
+function top(d){
+  $('t-handle').textContent='@'+(d.me||'?'); $('t-ws').textContent=d.org?('· '+d.org):'';
+  $('set-handle').textContent='@'+(d.me||'?'); $('set-ws').textContent=d.org?('workspace: '+d.org):'';
+  $('set-av').textContent=initial(d.me);
 }
-
-//
-// STATUS panel
-//
-function renderStatus(data) {
-  const conn = data.connections || {};
-  const accepted = conn.accepted || [];
-  const pendingIn = conn.pending_incoming || [];
-  const pendingOut = conn.pending_outgoing || [];
-  const mySessions = data.my_sessions || [];
-  const theirSessions = (data.teammates || []).flatMap(t => t.sessions || []);
-
-  const daemon = data.daemon || {};
-
-  $('stat-grid').innerHTML = `
-    <div class="stat">
-      <div class="stat-num">${accepted.length}</div>
-      <div class="stat-label">Accepted connections</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${pendingIn.length + pendingOut.length}</div>
-      <div class="stat-label">Pending invites</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${mySessions.length}</div>
-      <div class="stat-label">Your shared sessions</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${theirSessions.length}</div>
-      <div class="stat-label">Visible from teammates</div>
-    </div>
-  `;
-
-  // badge on Connections nav item
-  $('badge-connections').textContent =
-    accepted.length + pendingIn.length + pendingOut.length;
-
-  // Daemon card
-  if (daemon.alive) {
-    $('daemon-state').innerHTML = `<span class="pill good">● running</span> &nbsp; pid ${esc(daemon.pid)}`;
-    $('daemon-meta').textContent = '';
-    $('btn-start').disabled = true;
-    $('btn-stop').disabled = false;
+function status(d){
+  const c=d.connections||{}, acc=c.accepted||[], pin=c.pending_incoming||[], pout=c.pending_outgoing||[];
+  const mine=d.my_sessions||[], theirs=(d.teammates||[]).flatMap(t=>t.sessions||[]);
+  $('stats').innerHTML = `
+    <div class="stat accent"><div class="n">${acc.length}</div><div class="l">Connected</div></div>
+    <div class="stat"><div class="n">${pin.length+pout.length}</div><div class="l">Pending</div></div>
+    <div class="stat"><div class="n">${mine.length}</div><div class="l">Sharing</div></div>
+    <div class="stat"><div class="n">${theirs.length}</div><div class="l">Receiving</div></div>`;
+  $('c-conn').textContent = acc.length+pin.length+pout.length;
+  const dm=d.daemon||{};
+  if(dm.alive){
+    $('d-dot').className='live-dot on';
+    $('d-txt').textContent='Sync is running';
+    $('d-meta').textContent='pid '+dm.pid+' · context flows to your connections in real time';
+    $('d-start').disabled=true; $('d-stop').disabled=false;
   } else {
-    $('daemon-state').innerHTML = `<span class="pill bad">● stopped</span>`;
-    $('daemon-meta').textContent = 'Start the daemon to begin sharing and receiving teammate context.';
-    $('btn-start').disabled = false;
-    $('btn-stop').disabled = true;
+    $('d-dot').className='live-dot off';
+    $('d-txt').textContent='Sync is stopped';
+    $('d-meta').textContent='Start it to share and receive teammate context.';
+    $('d-start').disabled=false; $('d-stop').disabled=true;
   }
 }
-
-//
-// CONNECTIONS panel
-//
-function renderConnections(data) {
-  const conn = data.connections || {};
-  $('conn-accepted').innerHTML = (conn.accepted || []).length
-    ? (conn.accepted || []).map(c => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div class="strong">@${esc(c.peer_handle)}</div>
-              <div class="meta">${c.i_initiated ? 'you invited them' : 'they invited you'}${c.decided_at ? ' · accepted ' + timeAgo(c.decided_at) : ''}</div>
-            </div>
-            <button class="danger" onclick="postAction('/disconnect', {peer: '${esc(c.peer_handle)}'})">Disconnect</button>
-          </div>
-        </div>`).join('')
-    : `<div class="empty">No accepted connections yet. In a Claude Code session run <code>/connect &lt;github-handle&gt;</code> to start.</div>`;
-
-  $('conn-out').innerHTML = (conn.pending_outgoing || []).length
-    ? (conn.pending_outgoing || []).map(c => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div class="strong">→ @${esc(c.peer_handle)}</div>
-              <div class="meta">awaiting their <code>/connect</code> back</div>
-            </div>
-            <button class="danger" onclick="postAction('/disconnect', {peer: '${esc(c.peer_handle)}'})">Cancel</button>
-          </div>
-        </div>`).join('')
-    : `<div class="empty">No outgoing invites right now.</div>`;
-
-  $('conn-in').innerHTML = (conn.pending_incoming || []).length
-    ? (conn.pending_incoming || []).map(c => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div class="strong">← @${esc(c.peer_handle)} wants to connect</div>
-              <div class="meta">requested ${timeAgo(c.requested_at)}</div>
-            </div>
-            <button class="primary" onclick="postAction('/accept', {peer: '${esc(c.peer_handle)}'})">Accept</button>
-            <button class="danger" onclick="postAction('/decline', {peer: '${esc(c.peer_handle)}'})">Decline</button>
-          </div>
-        </div>`).join('')
-    : `<div class="empty">No incoming invites.</div>`;
+function connections(d){
+  const c=d.connections||{};
+  $('c-accepted').innerHTML=(c.accepted||[]).length ? (c.accepted||[]).map(x=>`
+    <div class="card"><div class="crow">
+      <div class="avatar">${initial(x.peer_handle)}</div>
+      <div class="grow"><div class="who">@${esc(x.peer_handle)}</div>
+        <div class="sub">${x.i_initiated?'you connected':'they connected'}${x.decided_at?' · '+ago(x.decided_at):''}</div></div>
+      <button class="danger" onclick="post('/disconnect',{peer:'${esc(x.peer_handle)}'})">Disconnect</button>
+    </div></div>`).join('') : emptyBox('No connections yet','Run <code>/connect &lt;handle&gt;</code> in a Claude Code session.');
+  $('c-out').innerHTML=(c.pending_outgoing||[]).length ? (c.pending_outgoing||[]).map(x=>`
+    <div class="card"><div class="crow">
+      <div class="avatar">${initial(x.peer_handle)}</div>
+      <div class="grow"><div class="who">@${esc(x.peer_handle)}</div>
+        <div class="sub">waiting for them to <code style="font-family:ui-monospace">/connect</code> you back</div></div>
+      <span class="pill muted"><span class="d"></span>pending</span>
+      <button class="danger" onclick="post('/disconnect',{peer:'${esc(x.peer_handle)}'})">Cancel</button>
+    </div></div>`).join('') : `<div class="sub" style="padding:4px 2px">None.</div>`;
+  $('c-in').innerHTML=(c.pending_incoming||[]).length ? (c.pending_incoming||[]).map(x=>`
+    <div class="card"><div class="crow">
+      <div class="avatar">${initial(x.peer_handle)}</div>
+      <div class="grow"><div class="who">@${esc(x.peer_handle)} wants to connect</div>
+        <div class="sub">${ago(x.requested_at)}</div></div>
+      <button class="primary" onclick="post('/accept',{peer:'${esc(x.peer_handle)}'})">Accept</button>
+      <button class="danger" onclick="post('/decline',{peer:'${esc(x.peer_handle)}'})">Decline</button>
+    </div></div>`).join('') : `<div class="sub" style="padding:4px 2px">None.</div>`;
 }
-
-//
-// SESSIONS panel
-//
-function renderSessions(data) {
-  const mine = data.my_sessions || [];
-  $('my-sessions').innerHTML = mine.length
-    ? mine.map(s => `
-        <div class="card">
-          <div class="id">${esc(s.session_id)}</div>
-          <div class="meta">
-            shared with: ${(s.recipients || []).length
-              ? (s.recipients || []).map(r => `<span class="pill">@${esc(r)}</span>`).join('')
-              : '<span class="pill bad">no recipients — not actually shared</span>'}
-          </div>
-          ${s.shared_at ? `<div class="meta">shared ${timeAgo(s.shared_at)}</div>` : ''}
-        </div>`).join('')
-    : `<div class="empty">No sessions you've shared. Type <code>/connect &lt;handle&gt;</code> inside a Claude Code session.</div>`;
-
-  const teammates = data.teammates || [];
-  $('their-sessions').innerHTML = teammates.length
-    ? teammates.map(t => `
-        <div style="margin-bottom: 1rem;">
-          <div class="strong" style="font-size: 0.95rem; margin-bottom: 0.35rem;">@${esc(t.handle)}</div>
-          ${(t.sessions || []).map(s => `
-            <div class="card" id="session-${esc(s.session_id)}">
-              <div class="id">${esc(s.session_id)}</div>
-              <div class="meta">shared ${timeAgo(s.shared_at)}</div>
-              <div style="margin-top: 0.55rem;">
-                <button onclick="dumpSession('${esc(t.handle)}', '${esc(s.session_id)}', this)">View raw content</button>
-              </div>
-            </div>
-          `).join('')}
-        </div>`).join('')
-    : `<div class="empty">No sessions shared with you yet. Connected teammates need to <code>/connect &lt;your-handle&gt;</code> in their Claude Code session.</div>`;
+function sessions(d){
+  const mine=d.my_sessions||[];
+  $('s-mine').innerHTML=mine.length ? mine.map(s=>`
+    <div class="card"><div class="mono">${esc(s.session_id)}</div>
+      <div class="sub" style="margin-top:7px">to ${(s.recipients||[]).length?(s.recipients||[]).map(r=>`<span class="pill ember">@${esc(r)}</span>`).join(''):'<span class="pill bad">no recipients</span>'}
+        ${s.shared_at?'· '+ago(s.shared_at):''}</div></div>`).join('')
+    : emptyBox("You're not sharing anything",'Type <code>/connect &lt;handle&gt;</code> in a Claude Code session to share it.');
+  const tm=d.teammates||[];
+  $('s-theirs').innerHTML=tm.length ? tm.map(t=>`
+    <div style="margin-bottom:16px">
+      <div class="group-h"><span class="avatar" style="width:24px;height:24px;border-radius:7px;font-size:11px">${initial(t.handle)}</span>@${esc(t.handle)}</div>
+      ${(t.sessions||[]).map(s=>`<div class="card"><div class="mono">${esc(s.session_id)}</div>
+        <div class="sub" style="margin-top:6px">shared ${ago(s.shared_at)}</div>
+        <div style="margin-top:9px"><button onclick="dump('${esc(t.handle)}','${esc(s.session_id)}',this)">View raw context</button></div></div>`).join('')}
+    </div>`).join('')
+    : emptyBox('Nothing shared with you yet','A connected teammate needs to <code>/connect &lt;your-handle&gt;</code> in their session.');
 }
-
-async function dumpSession(handle, sid, btn) {
-  btn.disabled = true;
-  btn.textContent = 'loading…';
-  try {
-    const r = await fetch(`/dump?teammate=${encodeURIComponent(handle)}&session=${encodeURIComponent(sid)}`);
-    const text = await r.text();
-    const card = btn.closest('.card');
-    let det = card.querySelector('details');
-    if (!det) {
-      det = document.createElement('details');
-      det.open = true;
-      det.innerHTML = `<summary>raw content</summary><pre></pre>`;
-      card.appendChild(det);
-    }
-    det.querySelector('pre').textContent = text;
-    btn.textContent = 'View raw content';
-    btn.disabled = false;
-  } catch (e) {
-    btn.textContent = 'error: ' + e.message;
-  }
+async function dump(h,sid,btn){
+  btn.disabled=true; btn.textContent='loading…';
+  try{ const r=await fetch('/dump?teammate='+encodeURIComponent(h)+'&session='+encodeURIComponent(sid)); const t=await r.text();
+    const card=btn.closest('.card'); let det=card.querySelector('details');
+    if(!det){ det=document.createElement('details'); det.open=true; det.innerHTML='<summary>raw context</summary><pre></pre>'; card.appendChild(det); }
+    det.querySelector('pre').textContent=t; btn.textContent='View raw context'; btn.disabled=false;
+  }catch(e){ btn.textContent='error'; }
 }
-
-//
-// LOGS panel
-//
-async function refreshLogs() {
-  try {
-    const r = await fetch('/logs?lines=300');
-    const data = await r.json();
-    $('logs-output').textContent = data.text || '(empty)';
-    const out = $('logs-output');
-    out.scrollTop = out.scrollHeight;
-  } catch (e) {
-    $('logs-output').textContent = 'Error: ' + e.message;
-  }
+async function refreshLogs(){
+  try{ const d=await getJ('/logs?lines=400'); const o=$('logs-out');
+    o.innerHTML=(d.text||'(no activity yet — start sync)').split('\n').map(l=>
+      l.replace(/^(\[sync\])/,'<span class="ember">$1</span>')).join('\n'); o.scrollTop=o.scrollHeight;
+  }catch(e){ $('logs-out').textContent='Error: '+e.message; }
 }
+$('log-auto').addEventListener('change',()=>{ if(logTimer){clearInterval(logTimer);logTimer=null;}
+  if($('log-auto').checked && active==='logs') logTimer=setInterval(refreshLogs,3000); });
+async function loadSettings(){ try{ const s=await getJ('/settings');
+  $('set-notif').checked=!!s.notifications_enabled; $('set-auto').checked=!!s.autostart_installed; }catch(e){} }
+async function toggleNotif(v){ await fetch('/settings/notifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:v})}); }
+async function toggleAuto(v){ const cb=$('set-auto'); cb.disabled=true;
+  try{ await fetch('/settings/autostart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:v})}); await loadSettings(); }
+  catch(e){ alert('Failed: '+e.message); } cb.disabled=false; }
+async function post(path,body={}){ try{ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(await r.text()||r.status); await poll(); }catch(e){ alert('Failed: '+e.message); } }
+async function pollSLogs(){ if(active!=='status') return;
+  try{ const d=await getJ('/logs?lines=24'); $('s-logs').innerHTML=(d.text||'(sync not running)').split('\n').map(l=>
+    l.replace(/^(\[sync\])/,'<span class="ember">$1</span>')).join('\n'); $('s-logs').scrollTop=$('s-logs').scrollHeight; }catch(e){} }
 
-function ensureLogsTimer() {
-  const enabled = $('logs-autorefresh').checked;
-  if (logsAutoRefreshTimer) {
-    clearInterval(logsAutoRefreshTimer);
-    logsAutoRefreshTimer = null;
-  }
-  if (enabled && activePanel === 'logs') {
-    logsAutoRefreshTimer = setInterval(refreshLogs, 3000);
-  }
-}
-$('logs-autorefresh').addEventListener('change', ensureLogsTimer);
-
-//
-// SETTINGS panel
-//
-async function loadSettings() {
-  try {
-    const s = await fetchJson('/settings');
-    $('settings-notifications').checked = !!s.notifications_enabled;
-    $('settings-autostart').checked = !!s.autostart_installed;
-  } catch (e) {
-    // ignore — surface elsewhere if needed
-  }
-}
-
-async function toggleNotifications(enabled) {
-  await fetch('/settings/notifications', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({enabled}),
-  });
-}
-
-async function toggleAutostart(enabled) {
-  const cb = $('settings-autostart');
-  cb.disabled = true;
-  try {
-    await fetch('/settings/autostart', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enabled}),
-    });
-    await loadSettings();
-  } catch (e) {
-    alert('Failed: ' + e.message);
-  }
-  cb.disabled = false;
-}
-
-//
-// POST actions (accept / decline / disconnect / daemon start / daemon stop)
-//
-async function postAction(path, body = {}) {
-  try {
-    const r = await fetch(path, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
-    await pollData();
-  } catch (e) {
-    alert('Failed: ' + e.message);
-  }
-}
-
-//
-// Periodically refresh status logs in the Status panel
-//
-async function pollStatusLogs() {
-  if (activePanel !== 'status') return;
-  try {
-    const r = await fetch('/logs?lines=30');
-    const data = await r.json();
-    $('status-logs').textContent = data.text || '(daemon not running)';
-    $('status-logs').scrollTop = $('status-logs').scrollHeight;
-  } catch (e) {}
-}
-
-// Boot
-pollData();
-pollStatusLogs();
-setInterval(pollData, 3000);
-setInterval(pollStatusLogs, 5000);
-setPanel('status');
+poll(); pollSLogs(); setPanel('status');
+setInterval(poll, 3000); setInterval(pollSLogs, 5000);
 </script>
 </body>
 </html>

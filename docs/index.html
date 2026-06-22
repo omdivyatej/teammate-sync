@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>teammate-sync — your team's Claude Code, shared</title>
+  <title>CodeBaton — pass the baton on your code</title>
   <meta name="description" content="One engineer's Claude Code context, queryable by another engineer's Claude. No pasted transcripts, no GitHub pushes, no shared bucket. One command per session.">
 
   <meta property="og:title" content="teammate-sync">
@@ -16,17 +16,17 @@
 
   <style>
     :root {
-      --bg: #0b0b0e;
-      --bg-elev: #15151a;
-      --bg-card: #1c1c22;
-      --border: #2a2a32;
-      --text: #ececef;
-      --text-dim: #9a9aa3;
-      --text-muted: #6b6b75;
-      --accent: #c8ff45;
-      --accent-dim: #8aa830;
-      --user-color: #7dd3fc;
-      --assistant-color: #c8ff45;
+      --bg: #100d09;
+      --bg-elev: #1a1610;
+      --bg-card: #221d15;
+      --border: #2c261d;
+      --text: #f2ece2;
+      --text-dim: #b6ab9b;
+      --text-muted: #7e7466;
+      --accent: #ff8d3e;
+      --accent-dim: #d8451c;
+      --user-color: #ffb15a;
+      --assistant-color: #ff8d3e;
     }
 
     * { box-sizing: border-box; }
@@ -328,17 +328,25 @@
 <div class="container">
 
   <nav>
-    <a href="#" class="brand">teammate-sync</a>
+    <a href="#" class="brand" style="display:inline-flex;align-items:center;gap:9px;text-decoration:none;">
+      <svg width="22" height="22" viewBox="0 0 44 44" fill="none" style="flex:none;">
+        <line x1="13" y1="32" x2="23" y2="13" stroke="#d8451c" stroke-width="6.5" stroke-linecap="round"/>
+        <line x1="23" y1="31" x2="33" y2="12" stroke="#ff9a4a" stroke-width="6.5" stroke-linecap="round"/>
+        <circle cx="33" cy="12" r="3.4" fill="#ffe9d2"/>
+      </svg>
+      <span>Code<span style="color:var(--accent)">Baton</span></span>
+    </a>
     <a href="https://github.com/omdivyatej/teammate-sync" class="gh">github →</a>
   </nav>
 
   <!-- HERO -->
   <section style="margin-top: 0;">
-    <h1>Your team's Claude Code, <span class="accent">shared</span>.</h1>
+    <h1>Pass the <span class="accent">baton</span> on your code.</h1>
     <p class="lead">
-      One engineer's Claude context, queryable by another engineer's Claude.
-      No pasted transcripts. No GitHub pushes. No shared bucket setup.
-      One command per session.
+      You're mid-stride on something. Hand your live Claude Code context to a
+      teammate and they pick up exactly where you are — your reasoning, your
+      decisions, your dead ends. No pasted transcripts. No GitHub pushes.
+      One command.
     </p>
     <div class="cta">
       <a href="#install" class="btn btn-primary">Install now</a>
