@@ -182,21 +182,25 @@ _INDEX_HTML = r"""<!doctype html>
 <style>
   :root {
     /* warm-tinted neutrals — tinted toward the ember brand hue, never pure gray */
-    --bg:         #14110d;
-    --bg-elev:    #1c1813;
-    --bg-elev-2:  #241f18;
-    --bg-sink:    #0d0b08;
-    --border:     #2c261d;
-    --border-2:   #3a3225;
-    --text:       #f2ece2;
-    --text-dim:   #b6ab9b;
-    --text-muted: #7e7466;
+    --bg:         #0f0f12;
+    --bg-elev:    #17171c;
+    --bg-elev-2:  #1f1f26;
+    --bg-sink:    #0a0a0d;
+    --border:     #262630;
+    --border-2:   #343440;
+    --text:       #f4f4f7;
+    --text-dim:   #a2a2ad;
+    --text-muted: #6c6c79;
     /* ember brand */
-    --ember:      #ff8d3e;
-    --ember-2:    #ffb15a;
-    --ember-deep: #d8451c;
-    --ember-soft: rgba(255,141,62,0.12);
-    --ember-line: rgba(255,141,62,0.30);
+    --ember:      #c6f23f;
+    --ember-2:    #d8ff66;
+    --ember-deep: #93c521;
+    --ember-soft: rgba(198,242,63,0.13);
+    --ember-line: rgba(198,242,63,0.32);
+    --blue:       #4263ff;
+    --blue-2:     #7e96ff;
+    --blue-soft:  rgba(66,99,255,0.15);
+    --blue-line:  rgba(66,99,255,0.40);
     --danger:     #f0795f;
     --danger-deep:#7f2418;
     --radius:     11px;
@@ -274,9 +278,9 @@ _INDEX_HTML = r"""<!doctype html>
   .live-dot.off { background: #4a4136; }
   .live-dot.err { background: var(--danger); }
   @keyframes pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(255,141,62,0.35); }
-    70%  { box-shadow: 0 0 0 7px rgba(255,141,62,0); }
-    100% { box-shadow: 0 0 0 0 rgba(255,141,62,0); }
+    0%   { box-shadow: 0 0 0 0 rgba(198,242,63,0.40); }
+    70%  { box-shadow: 0 0 0 7px rgba(198,242,63,0); }
+    100% { box-shadow: 0 0 0 0 rgba(198,242,63,0); }
   }
 
   /* ── MAIN ──────────────────────────────────────────────── */
@@ -338,8 +342,8 @@ _INDEX_HTML = r"""<!doctype html>
   .avatar {
     width: 32px; height: 32px; border-radius: 9px; flex: none;
     display: grid; place-items: center; font-weight: 640; font-size: 13px;
-    color: var(--ember-2);
-    background: var(--ember-soft); border: 1px solid var(--ember-line);
+    color: var(--blue-2);
+    background: var(--blue-soft); border: 1px solid var(--blue-line);
   }
   .who { font-weight: 560; font-size: 13.5px; }
   .sub { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
@@ -369,7 +373,7 @@ _INDEX_HTML = r"""<!doctype html>
   button:disabled { opacity: .38; cursor: not-allowed; }
   button.primary {
     background: linear-gradient(180deg, var(--ember) 0%, var(--ember-deep) 100%);
-    color: #1a0f07; border: none; font-weight: 600;
+    color: #0f0f12; border: none; font-weight: 600;
   }
   button.primary:hover { filter: brightness(1.07); background: linear-gradient(180deg, var(--ember-2), var(--ember)); }
   button.danger { color: var(--danger); border-color: var(--danger-deep); }
@@ -411,7 +415,7 @@ _INDEX_HTML = r"""<!doctype html>
   .toggle .track::after { content: ""; position: absolute; left: 3px; top: 3px;
                    width: 17px; height: 17px; border-radius: 50%; background: #b6ab9b; transition: .18s cubic-bezier(.3,.8,.3,1); }
   .toggle input:checked + .track { background: linear-gradient(180deg, var(--ember), var(--ember-deep)); border-color: transparent; }
-  .toggle input:checked + .track::after { transform: translateX(17px); background: #1a0f07; }
+  .toggle input:checked + .track::after { transform: translateX(17px); background: #0f0f12; }
 
   /* ── empty states ──────────────────────────────────────── */
   .empty { padding: 26px 20px; text-align: center; border: 1px dashed var(--border-2);
@@ -434,9 +438,9 @@ _INDEX_HTML = r"""<!doctype html>
 <aside class="sidebar">
   <div class="brand">
     <svg class="mark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <line x1="13" y1="32" x2="23" y2="13" stroke="#d8451c" stroke-width="6.5" stroke-linecap="round"/>
-      <line x1="23" y1="31" x2="33" y2="12" stroke="#ff9a4a" stroke-width="6.5" stroke-linecap="round"/>
-      <circle cx="33" cy="12" r="3.4" fill="#ffe9d2"/>
+      <line x1="13" y1="32" x2="23" y2="13" stroke="#4263ff" stroke-width="6.5" stroke-linecap="round"/>
+      <line x1="23" y1="31" x2="33" y2="12" stroke="#c6f23f" stroke-width="6.5" stroke-linecap="round"/>
+      <circle cx="33" cy="12" r="3.4" fill="#f4ffd6"/>
     </svg>
     <div class="name">Code<b>Baton</b></div>
   </div>

@@ -6,7 +6,7 @@
   <title>CodeBaton — pass the baton on your code</title>
   <meta name="description" content="One engineer's Claude Code context, queryable by another engineer's Claude. No pasted transcripts, no GitHub pushes, no shared bucket. One command per session.">
 
-  <meta property="og:title" content="teammate-sync">
+  <meta property="og:title" content="CodeBaton — pass the baton on your code">
   <meta property="og:description" content="Your team's Claude Code, shared. One command per session, no pasted transcripts.">
   <meta property="og:type" content="website">
 
@@ -16,17 +16,18 @@
 
   <style>
     :root {
-      --bg: #100d09;
-      --bg-elev: #1a1610;
-      --bg-card: #221d15;
-      --border: #2c261d;
-      --text: #f2ece2;
-      --text-dim: #b6ab9b;
-      --text-muted: #7e7466;
-      --accent: #ff8d3e;
-      --accent-dim: #d8451c;
-      --user-color: #ffb15a;
-      --assistant-color: #ff8d3e;
+      --bg: #0e0e11;
+      --bg-elev: #16161b;
+      --bg-card: #1c1c23;
+      --border: #262630;
+      --text: #f4f4f7;
+      --text-dim: #a2a2ad;
+      --text-muted: #6c6c79;
+      --accent: #c6f23f;
+      --accent-dim: #93c521;
+      --blue: #4263ff;
+      --user-color: #7e96ff;
+      --assistant-color: #c6f23f;
     }
 
     * { box-sizing: border-box; }
@@ -63,10 +64,6 @@
       font-size: 1rem;
       color: var(--text);
       text-decoration: none;
-    }
-    nav .brand::before {
-      content: "▸ ";
-      color: var(--accent);
     }
     nav a.gh {
       color: var(--text-dim);
@@ -330,9 +327,9 @@
   <nav>
     <a href="#" class="brand" style="display:inline-flex;align-items:center;gap:9px;text-decoration:none;">
       <svg width="22" height="22" viewBox="0 0 44 44" fill="none" style="flex:none;">
-        <line x1="13" y1="32" x2="23" y2="13" stroke="#d8451c" stroke-width="6.5" stroke-linecap="round"/>
-        <line x1="23" y1="31" x2="33" y2="12" stroke="#ff9a4a" stroke-width="6.5" stroke-linecap="round"/>
-        <circle cx="33" cy="12" r="3.4" fill="#ffe9d2"/>
+        <line x1="13" y1="32" x2="23" y2="13" stroke="#4263ff" stroke-width="6.5" stroke-linecap="round"/>
+        <line x1="23" y1="31" x2="33" y2="12" stroke="#c6f23f" stroke-width="6.5" stroke-linecap="round"/>
+        <circle cx="33" cy="12" r="3.4" fill="#f4ffd6"/>
       </svg>
       <span>Code<span style="color:var(--accent)">Baton</span></span>
     </a>
@@ -372,7 +369,7 @@
     <div class="terminal">
       <div class="title-bar">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">today, without teammate-sync</span>
+        <span class="label">today, without CodeBaton</span>
       </div>
 <pre>
 <span class="cmt"># Option 1: ping them on Slack and wait</span>
@@ -390,7 +387,7 @@
 
   <!-- SOLUTION -->
   <section>
-    <h2>What teammate-sync does</h2>
+    <h2>What CodeBaton does</h2>
     <p>
       Your teammate types <span class="pill">/connect your-handle</span> in their session.
       You type <span class="pill">/connect their-handle</span> back to establish trust, then
@@ -401,13 +398,13 @@
     <div class="terminal">
       <div class="title-bar">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">with teammate-sync</span>
+        <span class="label">with CodeBaton</span>
       </div>
 <pre>
-<span class="prompt">❯</span> <span class="user">Use teammate-sync. What did Saketh decide about pagination for
+<span class="prompt">❯</span> <span class="user">Ask CodeBaton: what did Saketh decide about pagination for
    Account, and why?</span>
 
-<span class="cmt">Called teammate-sync (3.1s)</span>
+<span class="cmt">Called CodeBaton (3.1s)</span>
 
 <span class="good">Claude:</span>
   Cursor-based on Id, NOT offset.
@@ -448,14 +445,14 @@
       needs to know if Saketh figured it out.
     </p>
 
-    <p style="margin-top: 1.5rem;"><strong>Without teammate-sync, here is what Om can read from GitHub: nothing.</strong> Saketh has not pushed. Om's choices are:</p>
+    <p style="margin-top: 1.5rem;"><strong>Without CodeBaton, here is what Om can read from GitHub: nothing.</strong> Saketh has not pushed. Om's choices are:</p>
     <ul style="color: var(--text-dim); margin-bottom: 1.5rem;">
       <li>Ping Saketh on Slack and interrupt his flow.</li>
       <li>Wait until tomorrow when the PR lands and read the sanitized commit message.</li>
       <li>Try to reverse-engineer the problem from scratch.</li>
     </ul>
 
-    <p><strong>With teammate-sync, Om types in his Claude:</strong></p>
+    <p><strong>With CodeBaton, Om types in his Claude:</strong></p>
 
     <div class="terminal">
       <div class="title-bar">
@@ -465,7 +462,7 @@
 <pre>
 <span class="prompt">❯</span> <span class="user">What is Saketh seeing about the recursive trigger right now?</span>
 
-<span class="cmt">Called teammate-sync (3.2s)</span>
+<span class="cmt">Called CodeBaton (3.2s)</span>
 
 <span class="good">Claude:</span>
   Saketh's most recent message in his session, 94 seconds ago in
@@ -487,7 +484,7 @@
     <p style="margin-top: 1.5rem;">
       This is reasoning Saketh has not committed, not documented, not
       mentioned in Slack. It exists only in his live Claude session, right
-      now. teammate-sync surfaces it the moment Om asks.
+      now. CodeBaton surfaces it the moment Om asks.
     </p>
 
     <h3 style="margin-top: 2.5rem;">The three deeper reasons behind this example</h3>
@@ -517,7 +514,7 @@
 
     <p style="margin-top: 1.75rem;">
       <strong>The one-line version:</strong> GitHub captures the finished
-      work that survives review. teammate-sync captures the live reasoning
+      work that survives review. CodeBaton captures the live reasoning
       that produced it — including the parts your teammate is figuring out
       right now, this second.
     </p>
@@ -699,12 +696,12 @@
       same GitHub org.
     </p>
     <p>
-      Email <a href="mailto:om@turgon.ai?subject=teammate-sync beta">om at turgon.ai</a>
+      Email <a href="mailto:om@turgon.ai?subject=CodeBaton beta">om at turgon.ai</a>
       with your team size and what you use Claude Code for. We will reply
       within 24 hours with setup instructions.
     </p>
     <div class="cta">
-      <a href="mailto:om@turgon.ai?subject=teammate-sync beta&body=Team size:%0AWhat we use Claude Code for:%0AGitHub org name (if you want to share):" class="btn btn-primary">Email for beta access</a>
+      <a href="mailto:om@turgon.ai?subject=CodeBaton beta&body=Team size:%0AWhat we use Claude Code for:%0AGitHub org name (if you want to share):" class="btn btn-primary">Email for beta access</a>
       <a href="https://github.com/omdivyatej/teammate-sync" class="btn btn-secondary">Read the code</a>
     </div>
   </section>
