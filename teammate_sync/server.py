@@ -54,16 +54,81 @@ def _parse_iso_epoch(ts: str) -> float | None:
 
 def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
     """
-    Render a Claude Code session jsonl file (as bytes) into readable text,
-    and return the max message timestamp found (epoch) so the caller can
-    sort sessions by recency.
+    Render a Claude Code session jsonl into a clean conversation transcript.
+
+    Filters out Claude Code framework noise so the host Claude (reading
+    this via /ask) sees the actual conversation, not plumbing:
+
+      - Slash command invocations (the <command-message> / <command-name>
+        XML-ish wire format Claude Code uses internally)
+      - The boilerplate text our own slash-command .md files inject
+        ("Execute this command via the Bash tool...")
+      - tool_use blocks that just invoke the teammate-sync CLI
+      - tool_result blocks containing teammate-sync CLI output
+      - assistant "thinking" blocks (model's internal scratch reasoning)
+
+    Speakers labeled "Engineer:" / "Claude:" instead of [user]/[assistant].
+    Tool calls rendered as parenthetical actions:
+        (ran shell: <cmd>)
+        (read: <path>)
+        (edited: <path>)
+        etc.
     """
-    rendered_lines: list[str] = []
+    import re as _re
+
+    rendered_blocks: list[str] = []
     max_epoch = 0.0
+
     try:
         text = content.decode("utf-8", errors="replace")
     except Exception as e:
         return f"[Error decoding {filename}: {e}]", 0.0
+
+    # Markers that indicate a tool_result body is teammate-sync CLI output
+    # rather than meaningful conversation. Used to drop bookkeeping turns.
+    _TEAMMATE_OUTPUT_MARKERS = (
+        "now shared with",
+        "removed from shareable",
+        "All shared sessions removed",
+        "No active connections",
+        "Currently shared sessions",
+        "Workspace '",
+        "Disconnected from",
+        "Total shared sessions",
+        "Skipped. The MCP server",
+    )
+    _SLASH_PREAMBLE = "Execute this command via the Bash tool"
+
+    def _is_teammate_sync_tool_use(blocks: list) -> bool:
+        for b in blocks:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                inp = b.get("input", {}) or {}
+                cmd = str(inp.get("command", ""))
+                if "teammate-sync" in cmd:
+                    return True
+        return False
+
+    def _is_teammate_sync_tool_result(blocks: list) -> bool:
+        for b in blocks:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                body = str(b.get("content", ""))
+                if any(m in body for m in _TEAMMATE_OUTPUT_MARKERS):
+                    return True
+        return False
+
+    def _content_text(block_content) -> str:
+        """Get the text portion of a message's content, joined as one string."""
+        if isinstance(block_content, str):
+            return block_content
+        if isinstance(block_content, list):
+            return " ".join(
+                b.get("text", "")
+                for b in block_content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        return ""
+
+    skip_mode = False  # True after we see a slash command; eat the boilerplate
 
     for raw_line in text.splitlines():
         raw_line = raw_line.strip()
@@ -81,43 +146,102 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
         msg_type = obj.get("type", "?")
         message = obj.get("message")
         if not isinstance(message, dict):
-            if msg_type == "tool_result":
-                top_content = obj.get("content", "")
-                rendered_lines.append(f"[tool_result] {str(top_content)[:400]}")
             continue
 
         block_content = message.get("content")
+        content_text = _content_text(block_content)
+
+        # ── Filter 1: slash-command invocation (Claude Code's <command-*> tags) ──
+        if "<command-name>" in content_text or "<command-message>" in content_text:
+            # Render once as a brief annotation, then skip the next few
+            # bookkeeping turns until real conversation resumes.
+            name_match = _re.search(r"<command-name>([^<]+)</command-name>", content_text)
+            args_match = _re.search(r"<command-args>([^<]*)</command-args>", content_text)
+            cmd_name = name_match.group(1).strip() if name_match else "/?"
+            cmd_args = args_match.group(1).strip() if args_match else ""
+            invocation = f"{cmd_name} {cmd_args}".strip()
+            # Skip the annotation entirely for our own internal slash commands —
+            # they're pure plumbing for the host Claude.
+            if invocation.split()[0] not in ("/connect", "/disconnect", "/shared", "/ask"):
+                rendered_blocks.append(f"[Engineer ran: {invocation}]")
+            skip_mode = True
+            continue
+
+        # ── Filter 2: while in skip_mode, swallow the slash-command's noise ──
+        if skip_mode:
+            if _SLASH_PREAMBLE in content_text:
+                continue
+            if isinstance(block_content, list):
+                if _is_teammate_sync_tool_use(block_content):
+                    continue
+                if _is_teammate_sync_tool_result(block_content):
+                    continue
+            # First non-slash-related turn: we're back in conversation.
+            skip_mode = False
+
+        # ── Normal rendering: clean speaker label + body ──
+        speaker = "Engineer" if msg_type == "user" else "Claude"
+
         if isinstance(block_content, str):
-            rendered_lines.append(f"[{msg_type}] {block_content}")
+            rendered_blocks.append(f"{speaker}: {block_content.strip()}")
             continue
 
         if not isinstance(block_content, list):
             continue
 
-        block_texts: list[str] = []
+        text_parts: list[str] = []
+        action_parts: list[str] = []
+
         for block in block_content:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
             if btype == "text":
-                block_texts.append(block.get("text", ""))
+                t = block.get("text", "")
+                if t.strip():
+                    text_parts.append(t)
             elif btype == "thinking":
-                continue  # noise for synthesis
+                continue
             elif btype == "tool_use":
-                tool_name = block.get("name", "?")
-                tool_input = block.get("input", {})
-                block_texts.append(
-                    f"[tool_use: {tool_name}({json.dumps(tool_input)[:200]})]"
-                )
+                tname = block.get("name", "?")
+                tinp = block.get("input", {}) or {}
+                if tname == "Bash":
+                    cmd = str(tinp.get("command", "")).strip()[:200]
+                    action_parts.append(f"  (ran shell: {cmd})")
+                elif tname == "Read":
+                    p = tinp.get("file_path", "?")
+                    action_parts.append(f"  (read: {p})")
+                elif tname == "Write":
+                    p = tinp.get("file_path", "?")
+                    action_parts.append(f"  (wrote: {p})")
+                elif tname == "Edit":
+                    p = tinp.get("file_path", "?")
+                    action_parts.append(f"  (edited: {p})")
+                elif tname == "Grep":
+                    pat = tinp.get("pattern", "?")
+                    action_parts.append(f"  (grep: {pat})")
+                elif tname == "Glob":
+                    pat = tinp.get("pattern", "?")
+                    action_parts.append(f"  (glob: {pat})")
+                elif tname == "WebFetch" or tname == "WebSearch":
+                    q = tinp.get("query", tinp.get("url", "?"))
+                    action_parts.append(f"  ({tname}: {q})")
+                else:
+                    short = json.dumps(tinp)[:120]
+                    action_parts.append(f"  ({tname}: {short})")
             elif btype == "tool_result":
-                result = block.get("content", "")
-                block_texts.append(f"[tool_result] {str(result)[:300]}")
+                body = str(block.get("content", "")).strip()
+                if body:
+                    snippet = body[:200].replace("\n", " ")
+                    action_parts.append(f"    -> {snippet}")
 
-        combined = "\n".join(t for t in block_texts if t.strip())
-        if combined:
-            rendered_lines.append(f"[{msg_type}] {combined}")
+        body_text = "\n".join(t for t in text_parts if t.strip()).strip()
+        if body_text:
+            rendered_blocks.append(f"{speaker}: {body_text}")
+        if action_parts:
+            rendered_blocks.append("\n".join(action_parts))
 
-    return "\n\n".join(rendered_lines), max_epoch
+    return "\n\n".join(rendered_blocks), max_epoch
 
 
 def format_age(seconds: float) -> str:
