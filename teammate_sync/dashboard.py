@@ -521,14 +521,37 @@ _INDEX_HTML = r"""<!doctype html>
         </main>
     </div>
 
-    <!-- signed-out overlay -->
-    <div id="signedout" class="fixed inset-0 z-[100] hidden items-center justify-center bg-black/80" style="backdrop-filter: blur(6px);">
-      <div class="max-w-md w-full mx-6 rounded-2xl border border-white/15 bg-[#131419] p-8 text-center shadow-2xl">
-        <svg width="40" height="40" viewBox="0 0 44 44" fill="none" class="mx-auto mb-5"><line x1="13" y1="32" x2="23" y2="13" stroke="#3b6dff" stroke-width="6.5" stroke-linecap="round"/><line x1="23" y1="31" x2="33" y2="12" stroke="#00E57A" stroke-width="6.5" stroke-linecap="round"/><circle cx="33" cy="12" r="3.4" fill="#d6ffe9"/></svg>
-        <h3 class="text-lg font-medium text-white">Signed out</h3>
-        <p class="text-sm text-brand-textMuted mt-2">Your sign-in was cleared and the daemon stopped. Sign back in with GitHub to start again.</p>
-        <button id="btn-signin" class="mt-6 w-full py-2.5 rounded-md bg-brand-lime text-black text-sm font-semibold hover:opacity-90 transition">Sign in with GitHub</button>
-        <p id="signin-hint" class="text-xs text-brand-textMuted mt-3 hidden">A Terminal window opened — finish sign-in there, then reopen CodeBaton.</p>
+    <!-- in-app sign-in screen (shown whenever not signed in) -->
+    <div id="signin-screen" class="fixed inset-0 z-[100] hidden items-center justify-center" style="background:#0a0b0e;">
+      <div class="max-w-sm w-full mx-6 text-center">
+        <svg width="48" height="48" viewBox="0 0 44 44" fill="none" class="mx-auto mb-6"><line x1="13" y1="32" x2="23" y2="13" stroke="#3b6dff" stroke-width="6.5" stroke-linecap="round"/><line x1="23" y1="31" x2="33" y2="12" stroke="#00E57A" stroke-width="6.5" stroke-linecap="round"/><circle cx="33" cy="12" r="3.4" fill="#d6ffe9"/></svg>
+        <h2 class="text-2xl font-semibold text-white tracking-tight">Welcome to CodeBaton</h2>
+        <p class="text-sm text-brand-textMuted mt-2">Sign in with GitHub to connect your live Claude Code sessions with your team.</p>
+
+        <!-- step 1: sign in -->
+        <div id="si-step1" class="mt-8">
+          <button id="si-github" class="w-full py-3 rounded-lg bg-white text-black font-semibold text-sm hover:bg-gray-200 transition flex items-center justify-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            Sign in with GitHub
+          </button>
+        </div>
+
+        <!-- waiting for browser auth -->
+        <div id="si-waiting" class="mt-8 hidden">
+          <div class="inline-flex items-center gap-2 text-sm text-brand-textMuted">
+            <span class="w-2 h-2 rounded-full bg-brand-lime animate-pulse"></span>
+            Waiting for GitHub authorization in your browser…
+          </div>
+          <button id="si-retry" class="block mx-auto mt-4 text-xs text-brand-textMuted hover:text-white underline">Reopen browser</button>
+        </div>
+
+        <!-- step 2: pick org -->
+        <div id="si-step2" class="mt-8 hidden text-left">
+          <p class="text-xs font-mono text-brand-textMuted uppercase tracking-widest mb-3">Choose your workspace</p>
+          <div id="si-orgs" class="space-y-2"></div>
+        </div>
+
+        <p id="si-error" class="mt-4 text-sm text-red-400 hidden"></p>
       </div>
     </div>
 
@@ -583,6 +606,8 @@ let last=null;
 async function poll(){
   try{
     const d = await getJ('/data.json'); last=d;
+    if(d.signed_in===false){ showSignin(); return; }
+    hideSignin();
     $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-brand-lime';
     $('title-status').textContent = 'codebaton · @'+(d.me||'?');
     $('side-org').textContent = d.org||'…';
@@ -699,16 +724,61 @@ document.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('cha
   try{ await post(path,{enabled:this.checked}); }catch(e){ alert('Failed: '+e.message); }
 }));
 
-// ── sign out / sign in ──
-const signedout = $('signedout');
+// ── sign out ──
 $('btn-signout').addEventListener('click', async ()=>{
   if(!confirm('Sign out? This stops the daemon and clears your saved sign-in.')) return;
   try{ await post('/logout',{}); }catch(e){}
-  signedout.classList.remove('hidden'); signedout.classList.add('flex');
+  resetSignin(); showSignin();
 });
-$('btn-signin').addEventListener('click', async ()=>{
-  try{ await post('/signin',{}); $('signin-hint').classList.remove('hidden'); }
-  catch(e){ alert('Failed: '+e.message); }
+
+// ── in-app sign in ──
+const signin = $('signin-screen');
+let signinPoll = null;
+function showSignin(){ signin.classList.remove('hidden'); signin.classList.add('flex'); }
+function hideSignin(){ signin.classList.add('hidden'); signin.classList.remove('flex'); }
+function siErr(m){ $('si-error').textContent=m; $('si-error').classList.remove('hidden'); }
+function resetSignin(){
+  if(signinPoll){ clearInterval(signinPoll); signinPoll=null; }
+  $('si-step1').classList.remove('hidden');
+  $('si-waiting').classList.add('hidden');
+  $('si-step2').classList.add('hidden');
+  $('si-error').classList.add('hidden');
+  $('si-orgs').innerHTML='';
+}
+async function startSignin(){
+  $('si-error').classList.add('hidden');
+  try{ await post('/auth/start',{}); }catch(e){ siErr('Could not open browser: '+e.message); return; }
+  $('si-step1').classList.add('hidden');
+  $('si-waiting').classList.remove('hidden');
+  if(signinPoll) clearInterval(signinPoll);
+  signinPoll = setInterval(async ()=>{
+    try{ const s=await getJ('/auth/status'); if(s.pending){ clearInterval(signinPoll); signinPoll=null; loadOrgs(); } }catch(e){}
+  }, 1500);
+}
+$('si-github').addEventListener('click', startSignin);
+$('si-retry').addEventListener('click', ()=>{ post('/auth/start',{}).catch(()=>{}); });
+async function loadOrgs(){
+  $('si-waiting').classList.add('hidden');
+  $('si-step2').classList.remove('hidden');
+  try{
+    const d = await getJ('/auth/orgs');
+    const orgs = d.orgs||[];
+    $('si-orgs').innerHTML = orgs.length
+      ? orgs.map(o=>'<button class="si-org w-full text-left px-4 py-3 rounded-lg border border-white/12 bg-[#131419] hover:border-brand-lime/50 hover:bg-white/[0.03] transition text-sm text-white font-mono" data-org="'+esc(o)+'">'+esc(o)+'</button>').join('')
+      : '<p class="text-sm text-brand-textMuted">No organizations visible. CodeBaton may need approval for your org — grant it at github.com/settings/applications, then sign out and retry.</p>';
+  }catch(e){ siErr('Could not load organizations: '+e.message); }
+}
+document.addEventListener('click', async e=>{
+  const ob = e.target.closest('.si-org'); if(!ob) return;
+  document.querySelectorAll('.si-org').forEach(b=>b.disabled=true);
+  ob.textContent='Setting up…';
+  try{
+    await post('/auth/finish',{org:ob.dataset.org});
+    resetSignin(); hideSignin(); poll();
+  }catch(err){
+    siErr('Setup failed: '+err.message);
+    document.querySelectorAll('.si-org').forEach(b=>b.disabled=false);
+  }
 });
 
 // boot
@@ -723,8 +793,11 @@ setInterval(()=>{ if(active==='view-activity') refreshLogs(); }, 3000);
 # ─── HTTP server ───────────────────────────────────────────────────────────
 
 class _Handler(http.server.BaseHTTPRequestHandler):
-    backend = None  # bound in run_dashboard before serve_forever
+    backend = None  # bound in run_dashboard before serve_forever (None until signed in)
     org = None
+    port = None
+    backend_url = None
+    pending = {}  # captured-but-not-finalized OAuth token during in-app sign-in
 
     def log_message(self, *args, **kwargs):
         return  # silence
@@ -758,10 +831,57 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, _INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
                 return
             if path == "/data.json":
+                if self.backend is None:
+                    self._send_json(200, {"signed_in": False})
+                    return
                 snap = self.backend.dashboard()
                 snap["org"] = self.org
                 snap["daemon"] = _daemon_status()
+                snap["signed_in"] = True
                 self._send_json(200, snap)
+                return
+            if path == "/auth/status":
+                self._send_json(200, {
+                    "signed_in": self.backend is not None,
+                    "pending": bool(type(self).pending.get("token")),
+                })
+                return
+            if path == "/auth/callback":
+                # GitHub OAuth redirected here with the access token.
+                token = (query.get("access_token") or [None])[0]
+                if token:
+                    type(self).pending["token"] = token
+                    body = (
+                        b"<!doctype html><html><body style=\"font-family:-apple-system,sans-serif;"
+                        b"background:#0a0b0e;color:#e8e8ea;text-align:center;padding:4em 1em;\">"
+                        b"<h2 style=\"color:#00E57A\">Signed in</h2>"
+                        b"<p>Return to CodeBaton to choose your workspace. You can close this tab.</p>"
+                        b"</body></html>"
+                    )
+                    self._send(200, body, "text/html; charset=utf-8")
+                else:
+                    self._send(400, b"missing access_token", "text/plain")
+                return
+            if path == "/auth/orgs":
+                token = type(self).pending.get("token")
+                if not token:
+                    self._send_json(409, {"error": "no pending sign-in"})
+                    return
+                import httpx
+                me = httpx.get(
+                    f"{self.backend_url.rstrip('/')}/v1/me",
+                    headers={"Authorization": f"Bearer {token}"}, timeout=15,
+                )
+                if me.status_code != 200:
+                    self._send_json(502, {"error": f"/v1/me {me.status_code}"})
+                    return
+                o = httpx.get(
+                    "https://api.github.com/user/orgs",
+                    headers={"Authorization": f"Bearer {token}",
+                             "Accept": "application/vnd.github+json"}, timeout=15,
+                )
+                orgs = [x["login"] for x in o.json()] if o.status_code == 200 else []
+                self._send_json(200, {"handle": me.json().get("github_handle"), "orgs": orgs})
                 return
             if path == "/dump":
                 teammate = (query.get("teammate") or [""])[0]
@@ -794,6 +914,32 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         path = parsed.path
         body = self._read_json_body()
         try:
+            # ── in-app sign-in (works while signed out) ──
+            if path == "/auth/start":
+                type(self).pending.clear()
+                redirect = f"http://127.0.0.1:{self.port}/auth/callback"
+                login = (f"{self.backend_url.rstrip('/')}/auth/github/login"
+                         f"?redirect_uri={urllib.parse.quote(redirect, safe='')}")
+                webbrowser.open(login)
+                self._send_json(200, {"ok": True})
+                return
+            if path == "/auth/finish":
+                token = type(self).pending.get("token")
+                org = (body.get("org") or "").strip()
+                if not token or not org:
+                    self._send_json(400, {"error": "missing token or org"})
+                    return
+                from . import cli
+                handle = cli.finish_signin(token, org, self.backend_url)
+                # daemon auto-start so the user is fully live
+                subprocess.run([_resolve_self_binary(), "up"], capture_output=True, timeout=30)
+                # rebuild the backend so the dashboard goes live without restart
+                new_backend = _backend()
+                type(self).backend = new_backend
+                type(self).org = new_backend.org
+                type(self).pending.clear()
+                self._send_json(200, {"ok": True, "handle": handle, "org": org})
+                return
             if path == "/accept":
                 peer = (body.get("peer") or "").strip()
                 if not peer:
@@ -858,20 +1004,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 p = auth_file_path()
                 if p.exists():
                     p.unlink()
+                # Drop the in-memory session so the SPA falls back to the
+                # in-app sign-in screen on its next poll.
+                type(self).backend = None
+                type(self).org = None
+                type(self).pending = {}
                 self._send_json(200, {"ok": True})
-                return
-            if path == "/signin":
-                # Re-run `init` (browser OAuth + org pick). It's interactive,
-                # so open it in a Terminal on macOS; elsewhere return the command.
-                binary = _resolve_self_binary()
-                if sys.platform == "darwin":
-                    cmd = f"{binary} init"
-                    script = (f'tell application "Terminal" to do script "{cmd}"\n'
-                              f'tell application "Terminal" to activate')
-                    subprocess.Popen(["osascript", "-e", script])
-                    self._send_json(200, {"ok": True})
-                else:
-                    self._send_json(200, {"ok": False, "command": f"{binary} init"})
                 return
             self._send_json(404, {"error": f"unknown path {path}"})
         except Exception as e:
@@ -886,10 +1024,13 @@ def _pick_free_port() -> int:
     return port
 
 
-def _start_http_server_in_thread(backend, port: int) -> "socketserver.ThreadingTCPServer":
+def _start_http_server_in_thread(backend, port: int, backend_url: str) -> "socketserver.ThreadingTCPServer":
     handler_cls = _Handler
     handler_cls.backend = backend
-    handler_cls.org = backend.org
+    handler_cls.org = backend.org if backend is not None else None
+    handler_cls.port = port
+    handler_cls.backend_url = backend_url
+    handler_cls.pending = {}
     server = socketserver.ThreadingTCPServer(("127.0.0.1", port), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -914,19 +1055,21 @@ def run_dashboard(
     the mode the Electron desktop app drives — it reads the port from
     stdout and loads it in a BrowserWindow.
     """
+    # Start even when signed out — the SPA shows an in-app GitHub sign-in flow
+    # that captures the token, lets you pick your org, wires Claude Code, and
+    # brings the dashboard live without a terminal.
+    from .auth import DEFAULT_BACKEND_URL
     try:
         backend = _backend()
-    except (FileNotFoundError, ValueError) as e:
-        if serve_only:
-            print(json.dumps({"error": str(e)}), flush=True)
-        else:
-            print(f"Error: {e}", file=sys.stderr)
-        return 1
+        backend_url = backend.backend_url
+    except (FileNotFoundError, ValueError):
+        backend = None
+        backend_url = DEFAULT_BACKEND_URL
 
     if port is None:
         port = _pick_free_port()
     url = f"http://127.0.0.1:{port}/"
-    server = _start_http_server_in_thread(backend, port)
+    server = _start_http_server_in_thread(backend, port, backend_url)
 
     if serve_only:
         # Machine-readable handshake for the Electron host, then block.

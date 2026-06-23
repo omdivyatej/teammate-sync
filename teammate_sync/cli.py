@@ -210,31 +210,10 @@ def cmd_init(args) -> int:
     print(f"  Workspace: {org}")
     print(f"  Backend:   {backend_url}")
 
-    # --- Slash commands ------------------------------------------------------
-    print("\nInstalling /share /unshare /shared slash commands...")
-    commands_dir = Path("~/.claude/commands").expanduser()
-    commands_dir.mkdir(parents=True, exist_ok=True)
-    files = {
-        "share.md":   _slash_command_md("share",   binary),
-        "unshare.md": _slash_command_md("unshare", binary),
-        "shared.md":  _slash_command_md("shared",  binary),
-    }
-    for name, content in files.items():
-        (commands_dir / name).write_text(content)
-    print(f"  Wrote {commands_dir}/{{share,unshare,shared}}.md")
-
-    # --- Hooks ---------------------------------------------------------------
-    print("\nRegistering Claude Code hooks (SessionStart, PostToolUse, SessionEnd)...")
-    settings_path = _install_hooks_into_claude_settings(binary)
-    print(f"  Merged into {settings_path}")
-
-    # --- MCP server ----------------------------------------------------------
-    # No env var required — the server self-loads its Anthropic key from
-    # auth.json at launch. Always register; if the key is missing, the user
-    # gets a clear runtime error from the server pointing them back to init.
-    print("\nRegistering MCP server with Claude Code (user scope)...")
-    if _register_mcp(binary):
-        print("  ✓ teammate-sync registered")
+    # --- Slash commands + hooks + MCP ---------------------------------------
+    print("\nWiring Claude Code integration (slash commands, hooks, MCP server)...")
+    _wire_claude_integration(binary)
+    print("  ✓ /connect /disconnect /shared /ask installed; hooks + MCP registered")
 
     # --- Done ----------------------------------------------------------------
     print("\n" + "=" * 60)
@@ -380,6 +359,45 @@ After showing the output, do NOT add commentary.
 # Order matters for the install summary print: list in the order they'd
 # logically be used.
 _INSTALL_ACTIONS = ["connect", "disconnect", "shared", "ask"]
+
+
+def _wire_claude_integration(binary: str) -> None:
+    """
+    Install the v0.3 slash commands (cleaning up any retired ones), merge the
+    session hooks into ~/.claude/settings.json, and register the MCP server.
+    Idempotent. Shared by `teammate-sync init` and the in-app (dashboard)
+    sign-in flow so both wire Claude Code up identically.
+    """
+    commands_dir = Path("~/.claude/commands").expanduser()
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    for retired in _RETIRED_SLASH_COMMANDS:
+        (commands_dir / f"{retired}.md").unlink(missing_ok=True)
+    for action in _INSTALL_ACTIONS:
+        (commands_dir / f"{action}.md").write_text(_slash_command_md(action, binary))
+    _install_hooks_into_claude_settings(binary)
+    _register_mcp(binary)
+
+
+def finish_signin(token: str, org: str, backend_url: str) -> str:
+    """
+    Persist a captured GitHub token + chosen org, then wire Claude Code.
+    Returns the verified GitHub handle. Used by the dashboard's in-app
+    sign-in (no terminal, no interactive org prompt).
+    """
+    r = httpx.get(
+        f"{backend_url.rstrip('/')}/v1/me",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    handle = r.json()["github_handle"]
+    write_auth(token=token, org=org, backend_url=backend_url)
+    try:
+        binary = _resolve_self_binary()
+    except RuntimeError:
+        binary = "teammate-sync"
+    _wire_claude_integration(binary)
+    return handle
 
 
 def _resolve_self_binary() -> str:
