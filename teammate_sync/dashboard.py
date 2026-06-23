@@ -203,24 +203,26 @@ _INDEX_HTML = r"""<!doctype html>
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #27272A; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #3F3F46; }
-        /* tinted, non-flat background — green + blue glow, not pure black */
+        /* subtly tinted dark base — depth without glare */
         body {
             background:
-              radial-gradient(900px 480px at 10% -12%, rgba(0,229,122,0.10), transparent 58%),
-              radial-gradient(1000px 520px at 100% -6%, rgba(59,109,255,0.10), transparent 56%),
-              #08090c !important;
+              radial-gradient(1000px 520px at 8% -14%, rgba(0,229,122,0.06), transparent 55%),
+              radial-gradient(1000px 520px at 100% -6%, rgba(59,109,255,0.06), transparent 54%),
+              #0a0b0e !important;
         }
-        /* glass surfaces: translucent + blur + visible border, so cards read distinctly */
+        /* SOLID, defined surfaces with crisp borders + depth (not washed-out glass) */
         [class*="bg-[#0D0D0F]"] {
-            background: rgba(20,21,27,0.55) !important;
-            backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+            background: #131419 !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 8px -2px rgba(0,0,0,0.5);
         }
-        .bg-brand-surface {
-            background: rgba(255,255,255,0.045) !important;
-            backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
-        }
-        aside { background: rgba(10,11,14,0.6) !important; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .bg-brand-surface { background: #181920 !important; }
+        aside { background: #0c0d11 !important; border-right: 1px solid rgba(255,255,255,0.09) !important; }
+        main { background: #0a0b0e !important; }
+        /* make every "subtle" border actually visible so cards read as distinct */
+        .border-brand-borderSubtle { border-color: rgba(255,255,255,0.11) !important; }
+        .divide-brand-borderSubtle > * + * { border-color: rgba(255,255,255,0.09) !important; }
+        /* terminal-style log surface */
+        .term-surface { background: #0b0c10 !important; box-shadow: inset 0 0 60px rgba(0,0,0,0.5); }
         .scanline-container { position: relative; overflow: hidden; }
         .scanline-container::after { content:''; position:absolute; inset:0; height:100%;
             background: linear-gradient(to bottom, transparent, rgba(0,229,122,0.03) 50%, transparent);
@@ -446,8 +448,13 @@ _INDEX_HTML = r"""<!doctype html>
                             <button id="btn-pause-log" class="px-3 py-1.5 text-xs font-mono font-medium text-brand-textMuted bg-brand-surface border border-brand-borderSubtle hover:border-white/20 rounded transition-colors w-20 text-center">Pause</button>
                         </div>
                     </header>
-                    <div class="rounded-lg border border-brand-borderSubtle bg-black overflow-hidden">
-                        <div id="activity-log" class="overflow-y-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-brand-textMuted" style="height: calc(100vh - 250px);"></div>
+                    <div class="rounded-xl border border-white/15 overflow-hidden shadow-2xl shadow-black/50">
+                        <div class="flex items-center gap-2.5 px-4 py-2.5 border-b border-white/10 bg-white/[0.03]">
+                            <span class="w-2 h-2 rounded-full bg-brand-lime shadow-[0_0_8px_rgba(0,229,122,0.7)]"></span>
+                            <span class="text-[11px] font-mono uppercase tracking-widest text-brand-textMuted">Live sync log</span>
+                            <span class="ml-auto text-[11px] font-mono text-brand-textMuted/60">daemon.log</span>
+                        </div>
+                        <div id="activity-log" class="term-surface overflow-y-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-brand-textMuted" style="height: calc(100vh - 280px);"></div>
                     </div>
                 </div>
 
