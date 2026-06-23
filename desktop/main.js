@@ -49,28 +49,65 @@ function resolvePython() {
   return 'python3';
 }
 
+// User-writable dir where the latest teammate-sync is installed from PyPI.
+// Kept AHEAD of the bundled package on PYTHONPATH, so once self-update has run,
+// the daemon, MCP server, hooks, and dashboard all pick up online updates with
+// no .dmg re-download. Empty/missing on first run (bundled code is used).
+function pkgDir() {
+  return path.join(os.homedir(), '.teammate-sync', 'site-packages');
+}
+
 // Write a shim that execs `<python> -m teammate_sync.cli "$@"`. All of the
-// product's subprocess dispatch (daemon up/down, slash commands) goes through
-// TEAMMATE_SYNC_BIN, which we point at this shim.
+// product's subprocess dispatch (daemon up/down, slash commands, and the
+// Claude-Code-invoked hooks + MCP server) goes through TEAMMATE_SYNC_BIN,
+// which we point at this shim. The shim prepends the self-update dir to
+// PYTHONPATH so those entry points also run updated code.
 function writeShim(python) {
   const dir = app.getPath('userData');
   fs.mkdirSync(dir, { recursive: true });
+  const pkg = pkgDir();
   if (process.platform === 'win32') {
     const shim = path.join(dir, 'teammate-sync.cmd');
-    fs.writeFileSync(shim, `@echo off\r\n"${python}" -m teammate_sync.cli %*\r\n`);
+    fs.writeFileSync(shim,
+      '@echo off\r\n' +
+      'set "PYTHONPATH=' + pkg + ';%PYTHONPATH%"\r\n' +
+      '"' + python + '" -m teammate_sync.cli %*\r\n');
     return shim;
   }
   const shim = path.join(dir, 'teammate-sync');
-  fs.writeFileSync(shim, `#!/bin/sh\nexec "${python}" -m teammate_sync.cli "$@"\n`);
+  fs.writeFileSync(shim,
+    '#!/bin/sh\n' +
+    'export PYTHONPATH="' + pkg + '${PYTHONPATH:+:$PYTHONPATH}"\n' +
+    'exec "' + python + '" -m teammate_sync.cli "$@"\n');
   fs.chmodSync(shim, 0o755);
   return shim;
 }
 
 function childEnv() {
+  const dir = pkgDir();
+  const prev = process.env.PYTHONPATH || '';
   return {
     ...process.env,
     TEAMMATE_SYNC_BIN: process.env.TEAMMATE_SYNC_BIN || globalShim,
+    PYTHONPATH: prev ? `${dir}${path.delimiter}${prev}` : dir,
   };
+}
+
+// Pull the latest package from PyPI into pkgDir() in the background. It takes
+// effect on the NEXT launch (this session keeps running the code it started
+// with). Best-effort: if offline or pip fails, the app keeps using the
+// currently-installed code.
+function runSelfUpdateInBackground() {
+  const dir = pkgDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const proc = spawn(
+    pythonPath,
+    ['-m', 'teammate_sync.cli', 'self-update', '--target', dir],
+    { env: childEnv() }
+  );
+  proc.stdout.on('data', (d) => process.stdout.write(`[self-update] ${d}`));
+  proc.stderr.on('data', (d) => process.stderr.write(`[self-update] ${d}`));
+  proc.on('error', () => { /* spawn failed; run on installed code */ });
 }
 
 let globalShim = null;
@@ -229,9 +266,35 @@ function buildTrayMenu() {
         openInitInTerminal();
       },
     },
+    {
+      label: 'Check for Updates…',
+      click: checkForUpdates,
+    },
     { type: 'separator' },
     { label: 'Quit CodeBaton', click: () => { app.isQuitting = true; app.quit(); } },
   ]);
+}
+
+// Manual update: run self-update synchronously, then tell the user the result.
+// Updated code applies after a restart (running processes hold the old code).
+function checkForUpdates() {
+  const dir = pkgDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const res = spawnSync(
+    pythonPath,
+    ['-m', 'teammate_sync.cli', 'self-update', '--target', dir],
+    { env: childEnv(), encoding: 'utf8', timeout: 120000 }
+  );
+  const out = `${res.stdout || ''}${res.stderr || ''}`.trim();
+  const updated = /installed \d/.test(out);
+  dialog.showMessageBox({
+    type: updated ? 'info' : 'none',
+    message: updated ? 'Update downloaded' : 'CodeBaton is up to date',
+    detail: updated
+      ? 'Quit and reopen CodeBaton to apply the update.'
+      : (out || 'You already have the latest version.'),
+    buttons: ['OK'],
+  });
 }
 
 function refreshTray() {
@@ -304,6 +367,7 @@ app.on('ready', async () => {
 
   pythonPath = resolvePython();
   globalShim = writeShim(pythonPath);
+  runSelfUpdateInBackground();
 
   createTray();
 

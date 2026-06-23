@@ -783,6 +783,50 @@ def cmd_upgrade(args) -> int:
     return 0
 
 
+def _ver_tuple(v: str) -> tuple:
+    return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+
+def cmd_self_update(args) -> int:
+    """Install the latest teammate-sync from PyPI into a user-writable dir so
+    the desktop app updates without re-downloading the .dmg.
+
+    The app puts --target on PYTHONPATH ahead of the bundled package, so on the
+    next launch the daemon, MCP server, hooks, and dashboard all run new code."""
+    import importlib.metadata as _md
+    import subprocess as _sp
+
+    target = args.target
+    try:
+        latest = httpx.get(
+            "https://pypi.org/pypi/teammate-sync/json", timeout=10
+        ).json()["info"]["version"]
+    except (httpx.HTTPError, KeyError, ValueError) as e:
+        print(f"self-update: skipped (cannot reach PyPI: {e})")
+        return 0
+
+    try:
+        current = _md.version("teammate-sync")
+    except _md.PackageNotFoundError:
+        current = "0"
+
+    if _ver_tuple(latest) <= _ver_tuple(current):
+        print(f"self-update: up to date ({current})")
+        return 0
+
+    print(f"self-update: {current} -> {latest}; installing to {target} …")
+    res = _sp.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade",
+         "--target", target, f"teammate-sync=={latest}"],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        print(f"self-update: pip failed: {res.stderr.strip()[:300]}")
+        return 1
+    print(f"self-update: installed {latest}. Restart CodeBaton to apply.")
+    return 0
+
+
 def cmd_app(args) -> int:
     """Launch the macOS menu bar app, or install/remove its LaunchAgent."""
     if sys.platform != "darwin":
@@ -977,6 +1021,13 @@ def main() -> int:
 
     # Internal: invoked by Claude Code over stdio as the MCP server.
     sub.add_parser("mcp-server", help=argparse.SUPPRESS).set_defaults(func=cmd_mcp_server)
+
+    # Internal: the desktop app runs this to pull the latest package from PyPI
+    # into a user dir (kept on PYTHONPATH), so it updates without a re-download.
+    p_selfupdate = sub.add_parser("self-update", help=argparse.SUPPRESS)
+    p_selfupdate.add_argument("--target", required=True,
+                              help="Directory to install the updated package into.")
+    p_selfupdate.set_defaults(func=cmd_self_update)
 
     args = parser.parse_args()
     return args.func(args)
