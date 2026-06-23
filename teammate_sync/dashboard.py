@@ -174,388 +174,322 @@ def _uninstall_autostart() -> bool:
 # ─── Embedded SPA ──────────────────────────────────────────────────────────
 
 _INDEX_HTML = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CodeBaton</title>
-<style>
-  :root {
-    /* warm-tinted neutrals — tinted toward the ember brand hue, never pure gray */
-    --bg:         #0f0f12;
-    --bg-elev:    #17171c;
-    --bg-elev-2:  #1f1f26;
-    --bg-sink:    #0a0a0d;
-    --border:     #262630;
-    --border-2:   #343440;
-    --text:       #f4f4f7;
-    --text-dim:   #a2a2ad;
-    --text-muted: #6c6c79;
-    /* ember brand */
-    --ember:      #c6f23f;
-    --ember-2:    #d8ff66;
-    --ember-deep: #93c521;
-    --ember-soft: rgba(198,242,63,0.13);
-    --ember-line: rgba(198,242,63,0.32);
-    --blue:       #4263ff;
-    --blue-2:     #7e96ff;
-    --blue-soft:  rgba(66,99,255,0.15);
-    --blue-line:  rgba(66,99,255,0.40);
-    --danger:     #f0795f;
-    --danger-deep:#7f2418;
-    --radius:     11px;
-    --radius-sm:  7px;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; }
-  body {
-    font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
-    color: var(--text);
-    background: var(--bg);
-    display: grid;
-    grid-template-columns: 232px 1fr;
-    grid-template-rows: 100vh;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  ::selection { background: var(--ember-soft); }
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: #2c261d; border-radius: 6px; border: 2px solid var(--bg); }
-  ::-webkit-scrollbar-thumb:hover { background: #3a3225; }
-
-  /* ── SIDEBAR ───────────────────────────────────────────── */
-  .sidebar {
-    background: linear-gradient(180deg, #1a1610 0%, #14110d 100%);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    -webkit-app-region: drag;            /* draggable window chrome */
-    padding-top: env(titlebar-area-height, 28px);
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 14px 18px 16px;
-  }
-  .brand .mark { width: 26px; height: 26px; flex: none; }
-  .brand .name {
-    font-size: 15px; font-weight: 650; letter-spacing: -0.015em; color: var(--text);
-  }
-  .brand .name b { color: var(--ember); font-weight: 650; }
-  .nav { flex: 1; padding: 6px 10px; -webkit-app-region: no-drag; }
-  .nav-item {
-    display: flex; align-items: center; gap: 11px;
-    padding: 8px 11px; margin: 2px 0;
-    border-radius: var(--radius-sm);
-    font-size: 13.5px; color: var(--text-dim);
-    cursor: pointer; user-select: none;
-    position: relative;
-    transition: background .14s ease, color .14s ease;
-  }
-  .nav-item:hover { background: var(--bg-elev); color: var(--text); }
-  .nav-item.active { background: var(--bg-elev-2); color: var(--text); }
-  .nav-item.active::before {
-    content: ""; position: absolute; left: -10px; top: 7px; bottom: 7px;
-    width: 3px; border-radius: 3px;
-    background: linear-gradient(180deg, var(--ember-2), var(--ember-deep));
-  }
-  .nav-item .ico { width: 16px; height: 16px; flex: none; opacity: .85; }
-  .nav-item .count {
-    margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
-    color: var(--text-muted); background: var(--bg-sink);
-    border: 1px solid var(--border); padding: 0 7px; border-radius: 999px; line-height: 18px;
-  }
-  .nav-item.active .count { color: var(--ember); border-color: var(--ember-line); }
-  .sidefoot {
-    -webkit-app-region: no-drag;
-    padding: 11px 18px; border-top: 1px solid var(--border);
-    display: flex; align-items: center; gap: 9px;
-    font-size: 12px; color: var(--text-muted);
-  }
-  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: none; }
-  .live-dot.on  { background: var(--ember); box-shadow: 0 0 0 0 var(--ember-line); animation: pulse 2.4s infinite; }
-  .live-dot.off { background: #4a4136; }
-  .live-dot.err { background: var(--danger); }
-  @keyframes pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(198,242,63,0.40); }
-    70%  { box-shadow: 0 0 0 7px rgba(198,242,63,0); }
-    100% { box-shadow: 0 0 0 0 rgba(198,242,63,0); }
-  }
-
-  /* ── MAIN ──────────────────────────────────────────────── */
-  main { overflow: hidden; display: flex; flex-direction: column; }
-  .topbar {
-    -webkit-app-region: drag;
-    display: flex; align-items: baseline; gap: 12px;
-    padding: 0 26px; height: calc(48px + env(titlebar-area-height, 0px));
-    padding-top: env(titlebar-area-height, 0px);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-  }
-  .topbar .handle { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
-  .topbar .ws { color: var(--text-muted); font-size: 12.5px; }
-  .topbar .spacer { flex: 1; }
-  .topbar .fresh { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .panel { flex: 1; overflow-y: auto; padding: 26px; animation: rise .4s cubic-bezier(.2,.7,.2,1) both; }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-  .ptitle { font-size: 19px; font-weight: 640; letter-spacing: -0.02em; margin: 0 0 2px; }
-  .psub { color: var(--text-muted); font-size: 13px; margin: 0 0 22px; }
-  .label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.09em;
-           color: var(--text-muted); margin: 26px 0 11px; }
-  .label:first-of-type { margin-top: 4px; }
-
-  /* ── STATUS hero stats ─────────────────────────────────── */
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px; }
-  @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
-  .stat {
-    background: linear-gradient(180deg, var(--bg-elev) 0%, #181410 100%);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 15px 16px;
-  }
-  .stat .n { font-size: 28px; font-weight: 660; letter-spacing: -0.03em; line-height: 1;
-             font-variant-numeric: tabular-nums; }
-  .stat.accent .n { color: var(--ember); }
-  .stat .l { font-size: 11.5px; color: var(--text-muted); margin-top: 9px;
-             text-transform: uppercase; letter-spacing: 0.06em; }
-
-  /* ── daemon control bar ────────────────────────────────── */
-  .daemon {
-    display: flex; align-items: center; gap: 14px;
-    background: var(--bg-elev); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 15px 17px; margin-top: 14px;
-  }
-  .daemon .state { display: flex; align-items: center; gap: 10px; }
-  .daemon .state .txt { font-weight: 560; }
-  .daemon .meta { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
-  .daemon .grow { flex: 1; }
-
-  /* ── cards ─────────────────────────────────────────────── */
-  .card {
-    background: var(--bg-elev); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 13px 15px; margin-bottom: 9px;
-    transition: border-color .14s ease;
-  }
-  .card:hover { border-color: var(--border-2); }
-  .crow { display: flex; align-items: center; gap: 12px; }
-  .crow .grow { flex: 1; min-width: 0; }
-  .avatar {
-    width: 32px; height: 32px; border-radius: 9px; flex: none;
-    display: grid; place-items: center; font-weight: 640; font-size: 13px;
-    color: var(--blue-2);
-    background: var(--blue-soft); border: 1px solid var(--blue-line);
-  }
-  .who { font-weight: 560; font-size: 13.5px; }
-  .sub { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
-  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
-          font-size: 12px; color: var(--text-dim); word-break: break-all; }
-
-  /* ── pills ─────────────────────────────────────────────── */
-  .pill { display: inline-flex; align-items: center; gap: 5px;
-          padding: 2px 9px; font-size: 12px; border-radius: 999px;
-          background: var(--bg-elev-2); border: 1px solid var(--border);
-          color: var(--ember-2); margin: 2px 4px 2px 0; }
-  .pill.ember { color: var(--ember); border-color: var(--ember-line); background: var(--ember-soft); }
-  .pill.muted { color: var(--text-muted); }
-  .pill.bad { color: var(--danger); border-color: var(--danger-deep); background: rgba(240,121,95,0.08); }
-  .pill .d { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-
-  /* ── buttons ───────────────────────────────────────────── */
-  button {
-    font: inherit; font-size: 12.5px; font-weight: 520;
-    padding: 6px 13px; border-radius: var(--radius-sm); cursor: pointer;
-    background: var(--bg-elev-2); color: var(--text-dim);
-    border: 1px solid var(--border-2);
-    transition: background .13s, color .13s, border-color .13s, transform .06s;
-  }
-  button:hover { background: #2c261d; color: var(--text); }
-  button:active { transform: translateY(1px); }
-  button:disabled { opacity: .38; cursor: not-allowed; }
-  button.primary {
-    background: linear-gradient(180deg, var(--ember) 0%, var(--ember-deep) 100%);
-    color: #0f0f12; border: none; font-weight: 600;
-  }
-  button.primary:hover { filter: brightness(1.07); background: linear-gradient(180deg, var(--ember-2), var(--ember)); }
-  button.danger { color: var(--danger); border-color: var(--danger-deep); }
-  button.danger:hover { background: rgba(240,121,95,0.1); color: #ff9883; }
-  button.ghost { background: transparent; border-color: var(--border); }
-
-  /* ── logs ──────────────────────────────────────────────── */
-  pre.logs {
-    background: var(--bg-sink); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 14px 16px; margin: 0;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
-    font-size: 12px; line-height: 1.65; color: var(--text-dim);
-    overflow: auto; white-space: pre-wrap; word-break: break-all;
-  }
-  .logs .ember { color: var(--ember); }
-
-  /* ── details (raw dump) ────────────────────────────────── */
-  details { margin-top: 10px; background: var(--bg-sink); border: 1px solid var(--border); border-radius: var(--radius-sm); }
-  details summary { cursor: pointer; padding: 8px 13px; color: var(--text-muted); font-size: 12.5px; list-style: none; }
-  details summary::-webkit-details-marker { display: none; }
-  details summary::before { content: "▸ "; color: var(--ember); }
-  details[open] summary::before { content: "▾ "; }
-  details pre { margin: 0; padding: 11px 13px; border-top: 1px solid var(--border);
-                font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text-dim);
-                max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
-
-  /* ── settings rows ─────────────────────────────────────── */
-  .srow { display: flex; align-items: center; gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--border); }
-  .srow:last-child { border-bottom: none; }
-  .srow .grow { flex: 1; }
-  .srow .nm { font-size: 13.5px; }
-  .srow .ds { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; max-width: 52ch; }
-
-  /* iOS-style toggle */
-  .toggle { position: relative; width: 42px; height: 25px; flex: none; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle .track { position: absolute; inset: 0; border-radius: 999px;
-                   background: #322b21; border: 1px solid var(--border-2); transition: .18s; }
-  .toggle .track::after { content: ""; position: absolute; left: 3px; top: 3px;
-                   width: 17px; height: 17px; border-radius: 50%; background: #b6ab9b; transition: .18s cubic-bezier(.3,.8,.3,1); }
-  .toggle input:checked + .track { background: linear-gradient(180deg, var(--ember), var(--ember-deep)); border-color: transparent; }
-  .toggle input:checked + .track::after { transform: translateX(17px); background: #0f0f12; }
-
-  /* ── empty states ──────────────────────────────────────── */
-  .empty { padding: 26px 20px; text-align: center; border: 1px dashed var(--border-2);
-           border-radius: var(--radius); color: var(--text-muted); }
-  .empty .em-mark { opacity: .5; margin-bottom: 12px; }
-  .empty .em-t { color: var(--text-dim); font-size: 13.5px; }
-  .empty .em-d { font-size: 12.5px; margin-top: 5px; }
-  .empty code { background: var(--bg-sink); border: 1px solid var(--border);
-                padding: 1px 6px; border-radius: 5px; color: var(--ember-2);
-                font-family: ui-monospace, monospace; font-size: 12px; }
-
-  .group-h { font-size: 13.5px; font-weight: 600; margin: 0 0 8px; display: flex; align-items: center; gap: 9px; }
-  .err-box { color: var(--danger); padding: 16px; border: 1px solid var(--danger-deep);
-             border-radius: var(--radius); background: rgba(240,121,95,0.06); }
-  .hidden { display: none !important; }
-</style>
+<html lang="en" class="dark"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeBaton</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: {
+                fontFamily: { sans: ['Inter','sans-serif'], mono: ['JetBrains Mono','monospace'] },
+                colors: { brand: {
+                    bg: '#0A0A0B', surface: '#121214', surfaceHover: '#1A1A1D',
+                    border: '#27272A', borderSubtle: 'rgba(255,255,255,0.06)',
+                    text: '#EDEDEF', textMuted: '#A0A0AB',
+                    lime: '#00E57A', limeMuted: 'rgba(0,229,122,0.1)',
+                    cobalt: '#2563EB', cobaltMuted: 'rgba(37,99,235,0.1)',
+                }},
+                animation: { 'pulse-slow': 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite' },
+            }}
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #27272A; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3F3F46; }
+        .scanline-container { position: relative; overflow: hidden; }
+        .scanline-container::after { content:''; position:absolute; inset:0; height:100%;
+            background: linear-gradient(to bottom, transparent, rgba(0,229,122,0.03) 50%, transparent);
+            animation: scan 8s linear infinite; pointer-events:none; }
+        @keyframes scan { 0%{transform:translateY(-100%)} 100%{transform:translateY(100%)} }
+        .view-section { display: none; }
+        .view-section.active { display: block; animation: fadeSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) forwards; }
+        @keyframes fadeSlideUp { 0%{opacity:0;transform:translateY(8px)} 100%{opacity:1;transform:translateY(0)} }
+        .toggle-checkbox:checked + .toggle-label { background-color: rgba(0,229,122,0.15); border-color: rgba(0,229,122,0.3); }
+        .toggle-checkbox:checked + .toggle-label .toggle-dot { transform: translateX(100%); background-color: #00E57A; }
+        @keyframes glowPulse { 0%,100%{box-shadow:0 0 20px rgba(0,229,122,0.05), inset 0 0 20px rgba(0,229,122,0.02)} 50%{box-shadow:0 0 50px rgba(0,229,122,0.15), inset 0 0 30px rgba(0,229,122,0.06)} }
+        @keyframes float { 0%,100%{transform:translate(25%,25%) rotate(0)} 50%{transform:translate(25%,20%) rotate(3deg)} }
+        @keyframes popIn { 0%{opacity:0;transform:scale(0.5)} 80%{transform:scale(1.15)} 100%{opacity:1;transform:scale(1)} }
+        @keyframes blinkCursor { 0%,100%{opacity:1} 50%{opacity:0} }
+        .animate-glow-pulse { animation: glowPulse 4s ease-in-out infinite; }
+        .animate-float { animation: float 8s ease-in-out infinite; }
+        .animate-pop-in { animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+        .animate-blink { animation: blinkCursor 1s step-end infinite; }
+    </style>
 </head>
-<body>
+<body class="bg-brand-bg text-brand-text font-sans h-screen w-screen overflow-hidden flex flex-col selection:bg-brand-lime selection:text-black antialiased">
 
-<aside class="sidebar">
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <line x1="13" y1="32" x2="23" y2="13" stroke="#4263ff" stroke-width="6.5" stroke-linecap="round"/>
-      <line x1="23" y1="31" x2="33" y2="12" stroke="#c6f23f" stroke-width="6.5" stroke-linecap="round"/>
-      <circle cx="33" cy="12" r="3.4" fill="#f4ffd6"/>
-    </svg>
-    <div class="name">Code<b>Baton</b></div>
-  </div>
-
-  <nav class="nav" id="nav">
-    <div class="nav-item active" data-panel="status">Overview</div>
-    <div class="nav-item" data-panel="connections">Connections<span class="count" id="c-conn">0</span></div>
-    <div class="nav-item" data-panel="sessions">Sessions</div>
-    <div class="nav-item" data-panel="logs">Activity</div>
-    <div class="nav-item" data-panel="settings">Settings</div>
-  </nav>
-
-  <div class="sidefoot">
-    <span class="live-dot off" id="foot-dot"></span>
-    <span id="foot-text">connecting…</span>
-  </div>
-</aside>
-
-<main>
-  <div class="topbar">
-    <span class="handle" id="t-handle">@…</span>
-    <span class="ws" id="t-ws"></span>
-    <span class="spacer"></span>
-    <span class="fresh" id="t-fresh"></span>
-  </div>
-
-  <!-- OVERVIEW -->
-  <section class="panel" id="p-status">
-    <h1 class="ptitle">Overview</h1>
-    <p class="psub">Your live sharing state at a glance.</p>
-    <div class="stats" id="stats"></div>
-    <div class="daemon" id="daemon">
-      <div class="state">
-        <span class="live-dot off" id="d-dot"></span>
-        <div>
-          <div class="txt" id="d-txt">…</div>
-          <div class="meta" id="d-meta"></div>
+    <!-- titlebar -->
+    <div class="h-10 w-full flex items-center justify-between px-4 border-b border-brand-borderSubtle bg-brand-bg z-50 select-none" style="-webkit-app-region: drag;">
+        <div class="flex items-center space-x-2">
+            <div class="w-3 h-3 rounded-full bg-[#ED6A5E]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#F4BF4F]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#61C554]"></div>
         </div>
-      </div>
-      <div class="grow"></div>
-      <button class="primary" id="d-start" onclick="post('/daemon/start')">Start sync</button>
-      <button class="danger" id="d-stop" onclick="post('/daemon/stop')">Stop</button>
-    </div>
-    <div class="label">Recent activity</div>
-    <pre class="logs" id="s-logs" style="max-height: 240px;"></pre>
-  </section>
-
-  <!-- CONNECTIONS -->
-  <section class="panel hidden" id="p-connections">
-    <h1 class="ptitle">Connections</h1>
-    <p class="psub">People whose context you can ask for — and who can ask for yours.</p>
-    <div class="label">Connected</div>
-    <div id="c-accepted"></div>
-    <div class="label">Invites you sent</div>
-    <div id="c-out"></div>
-    <div class="label">Invites to you</div>
-    <div id="c-in"></div>
-  </section>
-
-  <!-- SESSIONS -->
-  <section class="panel hidden" id="p-sessions">
-    <h1 class="ptitle">Sessions</h1>
-    <p class="psub">Live Claude Code context flowing between you and your team.</p>
-    <div class="label">You're sharing</div>
-    <div id="s-mine"></div>
-    <div class="label">Shared with you</div>
-    <div id="s-theirs"></div>
-  </section>
-
-  <!-- ACTIVITY / LOGS -->
-  <section class="panel hidden" id="p-logs">
-    <h1 class="ptitle">Activity</h1>
-    <p class="psub">The sync daemon's live log.</p>
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-      <label style="display:flex; align-items:center; gap:8px; color:var(--text-dim); font-size:12.5px; cursor:pointer;">
-        <span class="toggle"><input type="checkbox" id="log-auto" checked><span class="track"></span></span>
-        auto-refresh
-      </label>
-      <div style="flex:1"></div>
-      <button class="ghost" onclick="refreshLogs()">refresh</button>
-    </div>
-    <pre class="logs" id="logs-out" style="max-height: calc(100vh - 230px);"></pre>
-  </section>
-
-  <!-- SETTINGS -->
-  <section class="panel hidden" id="p-settings">
-    <h1 class="ptitle">Settings</h1>
-    <p class="psub">Account and app preferences.</p>
-    <div class="label">Account</div>
-    <div class="card">
-      <div class="crow">
-        <div class="avatar" id="set-av">?</div>
-        <div class="grow">
-          <div class="who" id="set-handle">@…</div>
-          <div class="sub" id="set-ws"></div>
+        <div class="text-xs font-mono text-brand-textMuted tracking-wider flex items-center gap-2">
+            <span id="conn-dot" class="w-1.5 h-1.5 rounded-full bg-brand-textMuted"></span>
+            <span id="title-status">codebaton</span>
         </div>
-      </div>
+        <div class="w-16"></div>
     </div>
-    <div class="label">Preferences</div>
-    <div class="srow">
-      <div class="grow">
-        <div class="nm">Notifications</div>
-        <div class="ds">Desktop alert when a teammate wants to connect, or accepts your invite.</div>
-      </div>
-      <label class="toggle"><input type="checkbox" id="set-notif" onchange="toggleNotif(this.checked)"><span class="track"></span></label>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <!-- sidebar -->
+        <aside class="w-64 border-r border-brand-borderSubtle bg-[#0D0D0F] flex flex-col justify-between flex-shrink-0 z-20 relative">
+            <div>
+                <div class="px-6 py-6 border-b border-brand-borderSubtle">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-shrink-0">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                                <path d="M10 4L6 20" stroke="#2563EB" stroke-width="3" stroke-linecap="round"/>
+                                <path d="M18 4L14 20" stroke="#00E57A" stroke-width="3" stroke-linecap="round"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 class="font-medium text-sm tracking-tight text-white">CodeBaton</h1>
+                            <div class="text-xs text-brand-textMuted font-mono mt-0.5 flex items-center gap-1">
+                                <span id="side-org">…</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="p-3 space-y-1 mt-2" id="sidebar-nav">
+                    <a href="#" data-tab="view-overview" class="nav-item flex items-center justify-between px-3 py-2 rounded-md bg-brand-surface border border-white/5 text-white group transition-colors">
+                        <div class="flex items-center gap-3">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-wrapper text-brand-lime opacity-100"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+                            <span class="text-sm font-medium">Overview</span>
+                        </div>
+                    </a>
+                    <a href="#" data-tab="view-connections" class="nav-item flex items-center justify-between px-3 py-2 rounded-md text-brand-textMuted border border-transparent hover:bg-brand-surface hover:text-white transition-colors group">
+                        <div class="flex items-center gap-3">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-wrapper opacity-70 group-hover:opacity-100"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <span class="text-sm font-medium">Connections</span>
+                        </div>
+                        <span id="nav-conn-count" class="text-xs font-mono bg-brand-bg border border-brand-borderSubtle px-1.5 py-0.5 rounded text-brand-textMuted">0</span>
+                    </a>
+                    <a href="#" data-tab="view-sessions" class="nav-item flex items-center justify-between px-3 py-2 rounded-md text-brand-textMuted border border-transparent hover:bg-brand-surface hover:text-white transition-colors group">
+                        <div class="flex items-center gap-3">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-wrapper opacity-70 group-hover:opacity-100"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                            <span class="text-sm font-medium">Sessions</span>
+                        </div>
+                    </a>
+                    <a href="#" data-tab="view-activity" class="nav-item flex items-center justify-between px-3 py-2 rounded-md text-brand-textMuted border border-transparent hover:bg-brand-surface hover:text-white transition-colors group">
+                        <div class="flex items-center gap-3">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-wrapper opacity-70 group-hover:opacity-100"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                            <span class="text-sm font-medium">Activity</span>
+                        </div>
+                    </a>
+                    <div class="pt-4 mt-2 border-t border-brand-borderSubtle">
+                        <a href="#" data-tab="view-settings" class="nav-item flex items-center justify-between px-3 py-2 rounded-md text-brand-textMuted border border-transparent hover:bg-brand-surface hover:text-white transition-colors group">
+                            <div class="flex items-center gap-3">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-wrapper opacity-70 group-hover:opacity-100"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                                <span class="text-sm font-medium">Settings</span>
+                            </div>
+                        </a>
+                    </div>
+                </nav>
+            </div>
+            <div class="p-4 border-t border-brand-borderSubtle">
+                <div class="flex items-center gap-3 px-2 py-2 rounded-md">
+                    <div id="side-avatar" class="w-8 h-8 rounded-full border border-white/10 grid place-items-center text-sm font-semibold text-brand-lime bg-brand-limeMuted">?</div>
+                    <div class="flex-1 min-w-0">
+                        <p id="side-handle" class="text-sm font-medium text-white truncate">…</p>
+                        <p class="text-xs text-brand-textMuted truncate font-mono">connected</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- main -->
+        <main class="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10 bg-brand-bg">
+            <div class="max-w-5xl w-full mx-auto px-10 py-10 relative">
+
+                <!-- OVERVIEW -->
+                <div id="view-overview" class="view-section active">
+                    <header class="mb-8">
+                        <h2 class="text-2xl font-medium text-white tracking-tight">Overview</h2>
+                        <p class="text-sm text-brand-textMuted mt-1">Your live context-sharing state.</p>
+                    </header>
+
+                    <section id="daemon-card" class="mb-10 scanline-container rounded-xl border border-brand-borderSubtle bg-brand-surface shadow-lg relative animate-glow-pulse">
+                        <div class="p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6 relative z-10">
+                            <div class="flex items-start gap-5">
+                                <div class="mt-1 relative flex h-4 w-4 items-center justify-center flex-shrink-0">
+                                    <span id="daemon-pulse" class="absolute inline-flex h-full w-full animate-pulse-slow rounded-full bg-brand-lime opacity-30"></span>
+                                    <span id="daemon-led" class="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand-lime shadow-[0_0_10px_rgba(0,229,122,0.5)]"></span>
+                                </div>
+                                <div>
+                                    <h3 id="daemon-title" class="text-lg font-medium text-white tracking-tight">Sync engine…</h3>
+                                    <div class="mt-2 flex items-center gap-3 text-sm">
+                                        <span id="daemon-meta" class="text-brand-textMuted">checking…</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <button id="daemon-btn" data-action="daemon" class="group relative flex h-10 items-center justify-center gap-2.5 rounded-md border border-white/10 bg-brand-bg px-6 font-mono text-sm font-medium text-white transition-all hover:border-white/20 hover:bg-white/5 hover:-translate-y-px">
+                                <span id="daemon-btn-led" class="h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                                <span id="daemon-btn-label">Stop Engine</span>
+                            </button>
+                        </div>
+                        <div class="absolute right-0 bottom-0 opacity-[0.07] pointer-events-none animate-float">
+                            <svg width="200" height="200" viewBox="0 0 24 24" fill="none"><path d="M10 4L6 20M18 4L14 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                        </div>
+                    </section>
+
+                    <section class="mb-12 grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 hover:border-white/10 transition-all hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Connections</span>
+                            </div>
+                            <div class="flex items-baseline gap-2"><span id="stat-conn" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-[#61C554]">connected</span></div>
+                        </div>
+                        <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 hover:border-white/10 transition-all hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Sharing</span>
+                            </div>
+                            <div class="flex items-baseline gap-2"><span id="stat-sharing" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-brand-textMuted">sessions</span></div>
+                        </div>
+                        <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 hover:border-brand-cobalt/30 transition-all hover:-translate-y-1 cursor-pointer" data-go="view-sessions">
+                            <div class="flex items-center justify-between mb-4">
+                                <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Receiving</span>
+                            </div>
+                            <div class="flex items-baseline gap-2"><span id="stat-receiving" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-brand-textMuted">sessions</span></div>
+                        </div>
+                    </section>
+
+                    <section>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-sm font-medium text-white tracking-tight">You're sharing</h3>
+                            <button class="text-xs font-mono text-brand-textMuted hover:text-white" data-go="view-sessions">View sessions →</button>
+                        </div>
+                        <div id="ov-sessions"></div>
+                    </section>
+                </div>
+
+                <!-- CONNECTIONS -->
+                <div id="view-connections" class="view-section">
+                    <header class="mb-8">
+                        <h2 class="text-2xl font-medium text-white tracking-tight">Connections</h2>
+                        <p class="text-sm text-brand-textMuted mt-1">Teammates you can query — and who can query you.</p>
+                    </header>
+                    <div class="space-y-8">
+                        <section>
+                            <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3 flex items-center gap-2">Invites to you <span id="conn-in-count" class="bg-brand-limeMuted text-brand-lime px-1.5 py-0.5 rounded-full text-[10px]">0</span></h3>
+                            <div id="conn-incoming"></div>
+                        </section>
+                        <section>
+                            <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3">Connected (<span id="conn-active-count">0</span>)</h3>
+                            <div id="conn-active"></div>
+                        </section>
+                        <section>
+                            <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3">Invites you sent (<span id="conn-out-count">0</span>)</h3>
+                            <div id="conn-pending"></div>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- SESSIONS -->
+                <div id="view-sessions" class="view-section">
+                    <header class="mb-8">
+                        <h2 class="text-2xl font-medium text-white tracking-tight">Sessions</h2>
+                        <p class="text-sm text-brand-textMuted mt-1">Live Claude Code context flowing between you and your team.</p>
+                    </header>
+                    <div class="space-y-8">
+                        <section>
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest flex items-center gap-2">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                                    Sharing
+                                </h3>
+                            </div>
+                            <div id="sess-sharing"></div>
+                        </section>
+                        <section>
+                            <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-cobalt"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                                Shared with you
+                            </h3>
+                            <div id="sess-receiving"></div>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- ACTIVITY -->
+                <div id="view-activity" class="view-section h-full flex flex-col pb-10">
+                    <header class="mb-6 flex items-end justify-between flex-shrink-0">
+                        <div>
+                            <h2 class="text-2xl font-medium text-white tracking-tight">Activity</h2>
+                            <p class="text-sm text-brand-textMuted mt-1">Live events from the sync engine.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="btn-pause-log" class="px-3 py-1.5 text-xs font-mono font-medium text-brand-textMuted bg-brand-surface border border-brand-borderSubtle hover:border-white/20 rounded transition-colors w-20 text-center">Pause</button>
+                        </div>
+                    </header>
+                    <div class="flex-1 min-h-[400px] rounded-lg border border-brand-borderSubtle bg-black p-1 relative overflow-hidden flex flex-col">
+                        <div id="activity-log" class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-brand-textMuted"></div>
+                    </div>
+                </div>
+
+                <!-- SETTINGS -->
+                <div id="view-settings" class="view-section">
+                    <header class="mb-8">
+                        <h2 class="text-2xl font-medium text-white tracking-tight">Settings</h2>
+                        <p class="text-sm text-brand-textMuted mt-1">Account and app preferences.</p>
+                    </header>
+                    <div class="max-w-2xl space-y-8">
+                        <section class="bg-[#0D0D0F] border border-brand-borderSubtle rounded-lg p-6">
+                            <h3 class="text-sm font-medium text-white mb-4">Account</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-mono text-brand-textMuted mb-1.5 ml-1">GitHub handle</label>
+                                    <input id="set-handle" type="text" value="…" readonly class="w-full bg-brand-surface/50 border border-brand-borderSubtle rounded-md px-3 py-2 text-sm text-brand-textMuted cursor-not-allowed font-mono focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-mono text-brand-textMuted mb-1.5 ml-1">Workspace (GitHub org)</label>
+                                    <input id="set-org" type="text" value="…" readonly class="w-full bg-brand-surface/50 border border-brand-borderSubtle rounded-md px-3 py-2 text-sm text-brand-textMuted cursor-not-allowed font-mono focus:outline-none">
+                                </div>
+                            </div>
+                        </section>
+                        <section class="bg-[#0D0D0F] border border-brand-borderSubtle rounded-lg p-6 space-y-6">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="text-sm font-medium text-white">Desktop notifications</h4>
+                                    <p class="text-xs text-brand-textMuted mt-0.5">Alert when a teammate connects or accepts your invite.</p>
+                                </div>
+                                <label class="relative flex items-center cursor-pointer">
+                                    <input id="set-notif" type="checkbox" class="sr-only peer toggle-checkbox" data-setting="notifications">
+                                    <div class="toggle-label w-11 h-6 bg-brand-surface border border-brand-borderSubtle rounded-full transition-colors relative">
+                                        <div class="toggle-dot absolute top-[2px] left-[2px] bg-brand-textMuted rounded-full h-5 w-5 transition-transform border border-black/10"></div>
+                                    </div>
+                                </label>
+                            </div>
+                            <div class="w-full h-px bg-brand-borderSubtle"></div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="text-sm font-medium text-white">Launch at login</h4>
+                                    <p class="text-xs text-brand-textMuted mt-0.5">Start CodeBaton automatically on boot.</p>
+                                </div>
+                                <label class="relative flex items-center cursor-pointer">
+                                    <input id="set-autostart" type="checkbox" class="sr-only peer toggle-checkbox" data-setting="autostart">
+                                    <div class="toggle-label w-11 h-6 bg-brand-surface border border-brand-borderSubtle rounded-full transition-colors relative">
+                                        <div class="toggle-dot absolute top-[2px] left-[2px] bg-brand-textMuted rounded-full h-5 w-5 transition-transform border border-black/10"></div>
+                                    </div>
+                                </label>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <div class="h-10"></div>
+            </div>
+        </main>
     </div>
-    <div class="srow">
-      <div class="grow">
-        <div class="nm">Launch at login</div>
-        <div class="ds">Start CodeBaton automatically when you log in, so sync is always on.</div>
-      </div>
-      <label class="toggle"><input type="checkbox" id="set-auto" onchange="toggleAuto(this.checked)"><span class="track"></span></label>
-    </div>
-  </section>
-</main>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -565,136 +499,171 @@ function ago(ep){ if(!ep) return ''; const s=(Date.now()/1000)-ep;
   if(s<60) return Math.max(0,Math.floor(s))+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago';
   if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
 async function getJ(u,o){ const r=await fetch(u,{cache:'no-store',...o}); if(!r.ok) throw new Error(r.status+' '+await r.text()); return r.json(); }
+function avatar(h, accent){ const c = accent ? 'text-brand-lime bg-brand-limeMuted border-brand-lime/30' : 'text-brand-text bg-brand-surface border-white/10';
+  return `<div class="w-9 h-9 rounded-full border grid place-items-center text-sm font-semibold ${c}">${initial(h)}</div>`; }
 
-const MARK_EMPTY = `<svg class="em-mark" width="40" height="40" viewBox="0 0 44 44" fill="none">
-  <line x1="13" y1="32" x2="23" y2="13" stroke="#5a4a38" stroke-width="6.5" stroke-linecap="round"/>
-  <line x1="23" y1="31" x2="33" y2="12" stroke="#6e5a40" stroke-width="6.5" stroke-linecap="round"/></svg>`;
-const emptyBox = (t,d)=>`<div class="empty">${MARK_EMPTY}<div class="em-t">${t}</div><div class="em-d">${d}</div></div>`;
-
-let active='status', logTimer=null, last=null;
-function setPanel(n){
-  active=n;
-  ['status','connections','sessions','logs','settings'].forEach(p=>$('p-'+p).classList.toggle('hidden', p!==n));
-  document.querySelectorAll('.nav-item').forEach(e=>e.classList.toggle('active', e.dataset.panel===n));
-  if(n==='logs') refreshLogs();
-  if(n==='settings') loadSettings();
+// ── tab switching ──
+const tabs = document.querySelectorAll('[data-tab]');
+const views = document.querySelectorAll('.view-section');
+let active = 'view-overview';
+function go(id){
+  active = id;
+  tabs.forEach(t=>{
+    const on = t.getAttribute('data-tab')===id;
+    t.classList.toggle('bg-brand-surface', on); t.classList.toggle('border-white/5', on); t.classList.toggle('text-white', on);
+    t.classList.toggle('text-brand-textMuted', !on); t.classList.toggle('border-transparent', !on);
+    const ic = t.querySelector('.icon-wrapper');
+    ic.classList.toggle('opacity-100', on); ic.classList.toggle('text-brand-lime', on); ic.classList.toggle('opacity-70', !on);
+  });
+  views.forEach(v=>{ v.classList.remove('active'); if(v.id===id){ void v.offsetWidth; v.classList.add('active'); } });
+  if(id==='view-activity') refreshLogs();
+  if(id==='view-settings') loadSettings();
 }
-document.querySelectorAll('.nav-item').forEach(e=>e.addEventListener('click',()=>setPanel(e.dataset.panel)));
+tabs.forEach(t=>t.addEventListener('click',e=>{e.preventDefault(); go(t.getAttribute('data-tab'));}));
+document.addEventListener('click', e=>{ const g=e.target.closest('[data-go]'); if(g) go(g.getAttribute('data-go')); });
 
+// ── actions ──
+document.addEventListener('click', async e=>{
+  const b = e.target.closest('[data-action]'); if(!b) return;
+  const act = b.getAttribute('data-action');
+  try{
+    if(act==='accept')     await post('/accept',{peer:b.dataset.peer});
+    else if(act==='decline')await post('/decline',{peer:b.dataset.peer});
+    else if(act==='disconnect')await post('/disconnect',{peer:b.dataset.peer});
+    else if(act==='unshare') await post('/unshare',{session_id:b.dataset.session});
+    else if(act==='daemon'){ const alive=b.dataset.alive==='1'; await post(alive?'/daemon/stop':'/daemon/start'); }
+    await poll();
+  }catch(err){ alert('Failed: '+err.message); }
+});
+async function post(path, body={}){ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()||r.status); return r.json().catch(()=>({})); }
+
+// ── render ──
+let last=null;
 async function poll(){
   try{
     const d = await getJ('/data.json'); last=d;
-    renderTop(d); renderStatus(d); renderConns(d); renderSessions(d);
-    $('foot-dot').className='live-dot on'; $('foot-text').textContent='synced';
-    $('t-fresh').textContent = 'updated '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-brand-lime';
+    $('title-status').textContent = 'codebaton · @'+(d.me||'?');
+    $('side-org').textContent = d.org||'…';
+    $('side-handle').textContent = '@'+(d.me||'?');
+    $('side-avatar').textContent = initial(d.me);
+    $('set-handle').value = '@'+(d.me||'?');
+    $('set-org').value = d.org||'';
+    renderOverview(d); renderConnections(d); renderSessions(d);
   }catch(e){
-    $('foot-dot').className='live-dot err'; $('foot-text').textContent='offline';
-    $('p-status').innerHTML='<div class="err-box">Can\'t reach the backend: '+esc(e.message)+'</div>';
+    $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-red-500';
+    $('title-status').textContent='offline';
   }
 }
-function renderTop(d){
-  $('t-handle').textContent='@'+(d.me||'?'); $('t-ws').textContent=d.org?('· '+d.org):'';
-  $('set-handle').textContent='@'+(d.me||'?'); $('set-ws').textContent=d.org?('workspace: '+d.org):'';
-  $('set-av').textContent=initial(d.me);
-}
-function renderStatus(d){
+function renderOverview(d){
   const c=d.connections||{}, acc=c.accepted||[], pin=c.pending_incoming||[], pout=c.pending_outgoing||[];
   const mine=d.my_sessions||[], theirs=(d.teammates||[]).flatMap(t=>t.sessions||[]);
-  $('stats').innerHTML = `
-    <div class="stat accent"><div class="n">${acc.length}</div><div class="l">Connected</div></div>
-    <div class="stat"><div class="n">${pin.length+pout.length}</div><div class="l">Pending</div></div>
-    <div class="stat"><div class="n">${mine.length}</div><div class="l">Sharing</div></div>
-    <div class="stat"><div class="n">${theirs.length}</div><div class="l">Receiving</div></div>`;
-  $('c-conn').textContent = acc.length+pin.length+pout.length;
-  const dm=d.daemon||{};
-  if(dm.alive){
-    $('d-dot').className='live-dot on';
-    $('d-txt').textContent='Sync is running';
-    $('d-meta').textContent='pid '+dm.pid+' · context flows to your connections in real time';
-    $('d-start').disabled=true; $('d-stop').disabled=false;
-  } else {
-    $('d-dot').className='live-dot off';
-    $('d-txt').textContent='Sync is stopped';
-    $('d-meta').textContent='Start it to share and receive teammate context.';
-    $('d-start').disabled=false; $('d-stop').disabled=true;
-  }
+  $('stat-conn').textContent=acc.length; $('stat-sharing').textContent=mine.length; $('stat-receiving').textContent=theirs.length;
+  $('nav-conn-count').textContent = acc.length+pin.length+pout.length;
+  const dm=d.daemon||{}; const alive=!!dm.alive;
+  $('daemon-led').className='relative inline-flex h-2.5 w-2.5 rounded-full '+(alive?'bg-brand-lime shadow-[0_0_10px_rgba(0,229,122,0.5)]':'bg-red-500');
+  $('daemon-pulse').style.display = alive?'inline-flex':'none';
+  $('daemon-title').textContent = alive?'Sync engine running':'Sync engine stopped';
+  $('daemon-meta').textContent = alive?('pid '+dm.pid+' · context flows to your connections in real time'):'Start it to share and receive teammate context.';
+  $('daemon-btn').dataset.alive = alive?'1':'0';
+  $('daemon-btn-led').className='h-1.5 w-1.5 rounded-full '+(alive?'bg-red-500':'bg-brand-lime');
+  $('daemon-btn-label').textContent = alive?'Stop Engine':'Start Engine';
+  $('ov-sessions').innerHTML = mine.length ? mine.map(sessionRow).join('') : emptyShare();
 }
-function renderConns(d){
-  const c=d.connections||{};
-  $('c-accepted').innerHTML=(c.accepted||[]).length ? (c.accepted||[]).map(x=>`
-    <div class="card"><div class="crow">
-      <div class="avatar">${initial(x.peer_handle)}</div>
-      <div class="grow"><div class="who">@${esc(x.peer_handle)}</div>
-        <div class="sub">${x.i_initiated?'you connected':'they connected'}${x.decided_at?' · '+ago(x.decided_at):''}</div></div>
-      <button class="danger" onclick="post('/disconnect',{peer:'${esc(x.peer_handle)}'})">Disconnect</button>
-    </div></div>`).join('') : emptyBox('No connections yet','Run <code>/connect &lt;handle&gt;</code> in a Claude Code session.');
-  $('c-out').innerHTML=(c.pending_outgoing||[]).length ? (c.pending_outgoing||[]).map(x=>`
-    <div class="card"><div class="crow">
-      <div class="avatar">${initial(x.peer_handle)}</div>
-      <div class="grow"><div class="who">@${esc(x.peer_handle)}</div>
-        <div class="sub">waiting for them to <code style="font-family:ui-monospace">/connect</code> you back</div></div>
-      <span class="pill muted"><span class="d"></span>pending</span>
-      <button class="danger" onclick="post('/disconnect',{peer:'${esc(x.peer_handle)}'})">Cancel</button>
-    </div></div>`).join('') : `<div class="sub" style="padding:4px 2px">None.</div>`;
-  $('c-in').innerHTML=(c.pending_incoming||[]).length ? (c.pending_incoming||[]).map(x=>`
-    <div class="card"><div class="crow">
-      <div class="avatar">${initial(x.peer_handle)}</div>
-      <div class="grow"><div class="who">@${esc(x.peer_handle)} wants to connect</div>
-        <div class="sub">${ago(x.requested_at)}</div></div>
-      <button class="primary" onclick="post('/accept',{peer:'${esc(x.peer_handle)}'})">Accept</button>
-      <button class="danger" onclick="post('/decline',{peer:'${esc(x.peer_handle)}'})">Decline</button>
-    </div></div>`).join('') : `<div class="sub" style="padding:4px 2px">None.</div>`;
+function sessionRow(s){
+  const recips=(s.recipients||[]).map(r=>`<span class="text-xs font-mono text-brand-lime">@${esc(r)}</span>`).join(', ')||'<span class="text-xs text-red-400">no recipients</span>';
+  return `<div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 mb-3">
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <div class="flex items-center gap-2 mb-1"><h4 class="text-sm font-medium text-white font-mono">${esc(s.session_id.slice(0,18))}…</h4></div>
+        <div class="flex items-center gap-2 mt-1"><span class="text-xs text-brand-textMuted">shared with</span> ${recips}
+          ${s.shared_at?`<span class="text-xs text-brand-textMuted ml-1">· ${ago(s.shared_at)}</span>`:''}</div>
+      </div>
+      <button data-action="unshare" data-session="${esc(s.session_id)}" class="px-4 py-2 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded transition-colors">Stop sharing</button>
+    </div></div>`;
+}
+function emptyShare(){
+  return `<div class="w-full rounded-xl border border-dashed border-white/10 bg-[#0A0A0B] py-14 px-6 flex flex-col items-center text-center">
+    <div class="mb-5 rounded-full bg-brand-surface border border-white/5 p-4"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-brand-textMuted"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg></div>
+    <h4 class="text-base font-medium text-white">You're not sharing anything</h4>
+    <p class="mt-2 text-sm text-brand-textMuted max-w-sm">In a Claude Code session, run <span class="font-mono text-brand-lime">/connect &lt;teammate&gt;</span> to share it.</p></div>`;
+}
+function connRow(handle, accent, btns){
+  return `<div class="flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors group">
+    <div class="flex items-center gap-3">${avatar(handle, accent)}<div><p class="text-sm font-medium text-white">@${esc(handle)}</p></div></div>
+    <div class="flex items-center gap-2">${btns}</div></div>`;
+}
+function renderConnections(d){
+  const c=d.connections||{}, acc=c.accepted||[], pin=c.pending_incoming||[], pout=c.pending_outgoing||[];
+  $('conn-in-count').textContent=pin.length; $('conn-active-count').textContent=acc.length; $('conn-out-count').textContent=pout.length;
+  $('conn-incoming').innerHTML = pin.length
+    ? `<div class="rounded-lg border border-brand-lime/20 bg-brand-limeMuted divide-y divide-brand-borderSubtle overflow-hidden">`+pin.map(x=>connRow(x.peer_handle,true,
+        `<button data-action="decline" data-peer="${esc(x.peer_handle)}" class="px-3 py-1.5 text-xs font-medium text-brand-textMuted hover:text-white hover:bg-brand-surface rounded transition-colors">Decline</button>
+         <button data-action="accept" data-peer="${esc(x.peer_handle)}" class="px-3 py-1.5 text-xs font-medium text-brand-bg bg-brand-lime hover:opacity-90 rounded transition-colors">Accept</button>`)).join('')+`</div>`
+    : `<p class="text-sm text-brand-textMuted">None.</p>`;
+  $('conn-active').innerHTML = acc.length
+    ? `<div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] divide-y divide-brand-borderSubtle overflow-hidden">`+acc.map(x=>connRow(x.peer_handle,false,
+        `<button data-action="disconnect" data-peer="${esc(x.peer_handle)}" class="opacity-0 group-hover:opacity-100 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 rounded transition-all">Disconnect</button>`)).join('')+`</div>`
+    : `<p class="text-sm text-brand-textMuted">No connections yet. Run <span class="font-mono text-brand-lime">/connect &lt;handle&gt;</span> in Claude Code.</p>`;
+  $('conn-pending').innerHTML = pout.length
+    ? `<div class="rounded-lg border border-brand-borderSubtle bg-brand-bg divide-y divide-brand-borderSubtle overflow-hidden">`+pout.map(x=>connRow(x.peer_handle,false,
+        `<span class="text-xs text-brand-textMuted mr-1">awaiting their /connect</span>
+         <button data-action="disconnect" data-peer="${esc(x.peer_handle)}" class="px-3 py-1.5 text-xs font-medium text-brand-textMuted hover:text-white hover:bg-white/5 rounded transition-colors">Cancel</button>`)).join('')+`</div>`
+    : `<p class="text-sm text-brand-textMuted">None.</p>`;
 }
 function renderSessions(d){
   const mine=d.my_sessions||[];
-  $('s-mine').innerHTML=mine.length ? mine.map(s=>`
-    <div class="card"><div class="mono">${esc(s.session_id)}</div>
-      <div class="sub" style="margin-top:7px">to ${(s.recipients||[]).length?(s.recipients||[]).map(r=>`<span class="pill ember">@${esc(r)}</span>`).join(''):'<span class="pill bad">no recipients</span>'}
-        ${s.shared_at?'· '+ago(s.shared_at):''}</div></div>`).join('')
-    : emptyBox("You're not sharing anything",'Type <code>/connect &lt;handle&gt;</code> in a Claude Code session to share it.');
+  $('sess-sharing').innerHTML = mine.length ? mine.map(sessionRow).join('') : emptyShare();
   const tm=d.teammates||[];
-  $('s-theirs').innerHTML=tm.length ? tm.map(t=>`
-    <div style="margin-bottom:16px">
-      <div class="group-h"><span class="avatar" style="width:24px;height:24px;border-radius:7px;font-size:11px">${initial(t.handle)}</span>@${esc(t.handle)}</div>
-      ${(t.sessions||[]).map(s=>`<div class="card"><div class="mono">${esc(s.session_id)}</div>
-        <div class="sub" style="margin-top:6px">shared ${ago(s.shared_at)}</div>
-        <div style="margin-top:9px"><button onclick="dump('${esc(t.handle)}','${esc(s.session_id)}',this)">View raw context</button></div></div>`).join('')}
+  $('sess-receiving').innerHTML = tm.length ? tm.map(t=>`
+    <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] overflow-hidden mb-3">
+      <div class="p-4 flex items-center gap-3 border-b border-white/5">${avatar(t.handle,false)}<span class="text-sm font-medium text-white font-mono">@${esc(t.handle)}</span></div>
+      ${(t.sessions||[]).map(s=>`<div class="p-4 border-t border-white/5 first:border-t-0">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <span class="text-xs font-mono text-brand-textMuted">${esc(s.session_id.slice(0,20))}… · ${ago(s.shared_at)}</span>
+          <button class="px-3 py-1.5 text-xs font-medium text-brand-cobalt bg-brand-cobaltMuted hover:bg-brand-cobalt/20 border border-brand-cobalt/20 rounded transition-colors" onclick="dump('${esc(t.handle)}','${esc(s.session_id)}',this)">View raw context</button>
+        </div></div>`).join('')}
     </div>`).join('')
-    : emptyBox('Nothing shared with you yet','A connected teammate needs to <code>/connect &lt;your-handle&gt;</code> in their session.');
+    : `<div class="rounded-lg border border-dashed border-white/10 p-8 text-center"><p class="text-sm text-brand-textMuted">Nothing shared with you yet.</p><p class="text-xs text-brand-textMuted mt-1">A connected teammate runs <span class="font-mono">/connect &lt;you&gt;</span> in their session.</p></div>`;
 }
 async function dump(h,sid,btn){
   btn.disabled=true; btn.textContent='loading…';
   try{ const r=await fetch('/dump?teammate='+encodeURIComponent(h)+'&session='+encodeURIComponent(sid)); const t=await r.text();
-    const card=btn.closest('.card'); let det=card.querySelector('details');
-    if(!det){ det=document.createElement('details'); det.open=true; det.innerHTML='<summary>raw context</summary><pre></pre>'; card.appendChild(det); }
-    det.querySelector('pre').textContent=t; btn.textContent='View raw context'; btn.disabled=false;
+    const card=btn.closest('.p-4'); let pre=card.querySelector('pre');
+    if(!pre){ pre=document.createElement('pre'); pre.className='mt-3 p-3 bg-black border border-white/5 rounded text-[11px] font-mono text-brand-textMuted overflow-auto max-h-80 whitespace-pre-wrap'; card.appendChild(pre); }
+    pre.textContent=t; btn.textContent='View raw context'; btn.disabled=false;
   }catch(e){ btn.textContent='error'; }
 }
-async function refreshLogs(){
-  try{ const d=await getJ('/logs?lines=400'); const o=$('logs-out');
-    o.innerHTML=(d.text||'(no activity yet — start sync)').split('\n').map(l=>
-      l.replace(/^(\[sync\])/,'<span class="ember">$1</span>')).join('\n'); o.scrollTop=o.scrollHeight;
-  }catch(e){ $('logs-out').textContent='Error: '+e.message; }
-}
-$('log-auto').addEventListener('change',()=>{ if(logTimer){clearInterval(logTimer);logTimer=null;}
-  if($('log-auto').checked && active==='logs') logTimer=setInterval(refreshLogs,3000); });
-async function loadSettings(){ try{ const s=await getJ('/settings');
-  $('set-notif').checked=!!s.notifications_enabled; $('set-auto').checked=!!s.autostart_installed; }catch(e){} }
-async function toggleNotif(v){ await fetch('/settings/notifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:v})}); }
-async function toggleAuto(v){ const cb=$('set-auto'); cb.disabled=true;
-  try{ await fetch('/settings/autostart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:v})}); await loadSettings(); }
-  catch(e){ alert('Failed: '+e.message); } cb.disabled=false; }
-async function post(path,body={}){ try{ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok) throw new Error(await r.text()||r.status); await poll(); }catch(e){ alert('Failed: '+e.message); } }
-async function pollSLogs(){ if(active!=='status') return;
-  try{ const d=await getJ('/logs?lines=24'); $('s-logs').innerHTML=(d.text||'(sync not running)').split('\n').map(l=>
-    l.replace(/^(\[sync\])/,'<span class="ember">$1</span>')).join('\n'); $('s-logs').scrollTop=$('s-logs').scrollHeight; }catch(e){} }
 
-poll(); pollSLogs(); setPanel('status');
-setInterval(poll, 3000); setInterval(pollSLogs, 5000);
+// ── activity log ──
+let logPaused=false;
+$('btn-pause-log').addEventListener('click', function(){ logPaused=!logPaused; this.textContent=logPaused?'Resume':'Pause';
+  this.classList.toggle('text-brand-lime',logPaused); this.classList.toggle('border-brand-lime/30',logPaused); });
+async function refreshLogs(){
+  if(logPaused) return;
+  try{ const d=await getJ('/logs?lines=300'); const el=$('activity-log');
+    el.innerHTML=(d.text||'(no activity yet — start the engine)').split('\n').map(l=>{
+      let cls='text-brand-textMuted';
+      if(/error|fail|traceback/i.test(l)) cls='text-red-400';
+      else if(l.includes('[sync]')) cls='text-brand-text';
+      return '<div class="'+cls+'">'+esc(l)+'</div>';
+    }).join(''); el.scrollTop=el.scrollHeight;
+  }catch(e){ $('activity-log').textContent='Error: '+e.message; }
+}
+
+// ── settings ──
+async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; }catch(e){} }
+document.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('change', async function(){
+  const path = this.dataset.setting==='notifications' ? '/settings/notifications' : '/settings/autostart';
+  try{ await post(path,{enabled:this.checked}); }catch(e){ alert('Failed: '+e.message); }
+}));
+
+// boot
+poll(); refreshLogs(); go('view-overview');
+setInterval(poll, 3000);
+setInterval(()=>{ if(active==='view-activity') refreshLogs(); }, 3000);
 </script>
-</body>
-</html>
+</body></html>
 """
 
 
@@ -820,6 +789,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 enabled = bool(body.get("enabled", False))
                 ok = _install_autostart() if enabled else _uninstall_autostart()
                 self._send_json(200, {"ok": ok})
+                return
+            if path == "/unshare":
+                sid = (body.get("session_id") or "").strip()
+                if not sid:
+                    self._send_json(400, {"error": "session_id required"})
+                    return
+                self._send_json(200, self.backend.unshare_session(sid))
                 return
             self._send_json(404, {"error": f"unknown path {path}"})
         except Exception as e:
