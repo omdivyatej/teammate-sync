@@ -65,23 +65,65 @@ def _install_hooks_into_claude_settings(binary: str) -> Path:
     return settings_path
 
 
+def _resolve_claude_binary() -> str:
+    """Locate the `claude` CLI by absolute path.
+
+    Finder-launched GUI apps (the .dmg) start with a minimal PATH
+    (/usr/bin:/bin:/usr/sbin:/sbin) that omits the user's shell PATH, so
+    `claude` can't be found by name. Search the common install locations too."""
+    import shutil
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = Path.home()
+    candidates = [
+        home / ".claude/local/claude",
+        home / ".local/bin/claude",
+        Path("/opt/homebrew/bin/claude"),
+        Path("/usr/local/bin/claude"),
+        home / ".npm-global/bin/claude",
+        home / ".bun/bin/claude",
+        home / ".volta/bin/claude",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    raise RuntimeError(
+        "Could not find the `claude` CLI. Install Claude Code, then sign in again."
+    )
+
+
 def _register_mcp(binary: str) -> bool:
     """Register the MCP server via `claude mcp add`. Returns True on success.
 
     The server self-loads the Anthropic key from ~/.teammate-sync/auth.json
     at launch — no env var is passed at registration time, so the user
     never has to manage ANTHROPIC_API_KEY in their shell."""
+    import os
     import subprocess as _sp
+
+    claude = _resolve_claude_binary()
+
+    # GUI apps inherit a minimal PATH; give claude (and anything it spawns) the
+    # usual user bin dirs so it runs the same as it does from a terminal.
+    home = Path.home()
+    env = os.environ.copy()
+    extra = ":".join([
+        "/opt/homebrew/bin", "/usr/local/bin",
+        str(home / ".claude/local"), str(home / ".local/bin"),
+    ])
+    env["PATH"] = extra + ":" + env.get("PATH", "")
 
     # remove any existing registration first (idempotent)
     _sp.run(
-        ["claude", "mcp", "remove", "teammate-sync", "--scope", "user"],
+        [claude, "mcp", "remove", "teammate-sync", "--scope", "user"],
         capture_output=True,
+        env=env,
     )
 
     result = _sp.run(
         [
-            "claude", "mcp", "add",
+            claude, "mcp", "add",
             "--scope", "user",
             "teammate-sync",
             "--",
@@ -89,6 +131,7 @@ def _register_mcp(binary: str) -> bool:
         ],
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         print(f"  ⚠️  claude mcp add failed: {result.stderr.strip()}")
