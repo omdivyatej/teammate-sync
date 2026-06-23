@@ -192,7 +192,7 @@ _INDEX_HTML = r"""<!doctype html>
                     border: '#27272A', borderSubtle: 'rgba(255,255,255,0.06)',
                     text: '#EDEDEF', textMuted: '#A0A0AB',
                     lime: '#00E57A', limeMuted: 'rgba(0,229,122,0.1)',
-                    cobalt: '#2563EB', cobaltMuted: 'rgba(37,99,235,0.1)',
+                    cobalt: '#3b6dff', cobaltMuted: 'rgba(59,109,255,0.12)',
                 }},
                 animation: { 'pulse-slow': 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite' },
             }}
@@ -203,6 +203,24 @@ _INDEX_HTML = r"""<!doctype html>
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #27272A; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #3F3F46; }
+        /* tinted, non-flat background — green + blue glow, not pure black */
+        body {
+            background:
+              radial-gradient(900px 480px at 10% -12%, rgba(0,229,122,0.10), transparent 58%),
+              radial-gradient(1000px 520px at 100% -6%, rgba(59,109,255,0.10), transparent 56%),
+              #08090c !important;
+        }
+        /* glass surfaces: translucent + blur + visible border, so cards read distinctly */
+        [class*="bg-[#0D0D0F]"] {
+            background: rgba(20,21,27,0.55) !important;
+            backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+        .bg-brand-surface {
+            background: rgba(255,255,255,0.045) !important;
+            backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+        }
+        aside { background: rgba(10,11,14,0.6) !important; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
         .scanline-container { position: relative; overflow: hidden; }
         .scanline-container::after { content:''; position:absolute; inset:0; height:100%;
             background: linear-gradient(to bottom, transparent, rgba(0,229,122,0.03) 50%, transparent);
@@ -226,18 +244,12 @@ _INDEX_HTML = r"""<!doctype html>
 </head>
 <body class="bg-brand-bg text-brand-text font-sans h-screen w-screen overflow-hidden flex flex-col selection:bg-brand-lime selection:text-black antialiased">
 
-    <!-- titlebar -->
-    <div class="h-10 w-full flex items-center justify-between px-4 border-b border-brand-borderSubtle bg-brand-bg z-50 select-none" style="-webkit-app-region: drag;">
-        <div class="flex items-center space-x-2">
-            <div class="w-3 h-3 rounded-full bg-[#ED6A5E]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#F4BF4F]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#61C554]"></div>
-        </div>
-        <div class="text-xs font-mono text-brand-textMuted tracking-wider flex items-center gap-2">
+    <!-- slim status strip (the OS draws its own window controls + title) -->
+    <div class="h-8 w-full flex items-center justify-center px-4 border-b border-white/5 bg-black/30 z-50 select-none" style="-webkit-app-region: drag; backdrop-filter: blur(12px);">
+        <div class="text-[11px] font-mono text-brand-textMuted tracking-wider flex items-center gap-2">
             <span id="conn-dot" class="w-1.5 h-1.5 rounded-full bg-brand-textMuted"></span>
             <span id="title-status">codebaton</span>
         </div>
-        <div class="w-16"></div>
     </div>
 
     <div class="flex flex-1 overflow-hidden relative">
@@ -350,15 +362,17 @@ _INDEX_HTML = r"""<!doctype html>
                             </div>
                             <div class="flex items-baseline gap-2"><span id="stat-conn" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-[#61C554]">connected</span></div>
                         </div>
-                        <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 hover:border-white/10 transition-all hover:-translate-y-1">
+                        <div class="rounded-lg border border-brand-lime/25 bg-[#0D0D0F] p-5 hover:border-brand-lime/45 transition-all hover:-translate-y-1 shadow-[0_0_36px_-16px_rgba(0,229,122,0.6)]">
                             <div class="flex items-center justify-between mb-4">
-                                <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Sharing</span>
+                                <span class="font-mono text-[11px] font-medium text-brand-lime uppercase tracking-widest">Sharing</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-lime"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
                             </div>
                             <div class="flex items-baseline gap-2"><span id="stat-sharing" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-brand-textMuted">sessions</span></div>
                         </div>
-                        <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-5 hover:border-brand-cobalt/30 transition-all hover:-translate-y-1 cursor-pointer" data-go="view-sessions">
+                        <div class="rounded-lg border border-brand-cobalt/30 bg-[#0D0D0F] p-5 hover:border-brand-cobalt/55 transition-all hover:-translate-y-1 cursor-pointer shadow-[0_0_36px_-16px_rgba(59,109,255,0.65)]" data-go="view-sessions">
                             <div class="flex items-center justify-between mb-4">
-                                <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Receiving</span>
+                                <span class="font-mono text-[11px] font-medium text-brand-cobalt uppercase tracking-widest">Receiving</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-cobalt"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
                             </div>
                             <div class="flex items-baseline gap-2"><span id="stat-receiving" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-brand-textMuted">sessions</span></div>
                         </div>
@@ -879,12 +893,12 @@ def run_dashboard(
         try:
             import webview
             window = webview.create_window(
-                "teammate-sync",
+                "CodeBaton",
                 url,
                 width=1100,
                 height=720,
                 min_size=(880, 560),
-                background_color="#0e0e10",
+                background_color="#0A0A0B",
             )
             # webview.start() blocks until window closed
             webview.start()
