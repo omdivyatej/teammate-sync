@@ -246,19 +246,15 @@ _INDEX_HTML = r"""<!doctype html>
 </head>
 <body class="bg-brand-bg text-brand-text font-sans h-screen w-screen overflow-hidden flex flex-col selection:bg-brand-lime selection:text-black antialiased">
 
-    <!-- slim status strip (the OS draws its own window controls + title) -->
-    <div class="h-8 w-full flex items-center justify-center px-4 border-b border-white/5 bg-black/30 z-50 select-none" style="-webkit-app-region: drag; backdrop-filter: blur(12px);">
-        <div class="text-[11px] font-mono text-brand-textMuted tracking-wider flex items-center gap-2">
-            <span id="conn-dot" class="w-1.5 h-1.5 rounded-full bg-brand-textMuted"></span>
-            <span id="title-status">codebaton</span>
-        </div>
-    </div>
-
     <div class="flex flex-1 overflow-hidden relative">
+        <!-- transparent top drag region: drag the window from anywhere along the
+             top edge. macOS floats its traffic-light controls over the left here,
+             and the sidebar + content run full-bleed underneath (WhatsApp-style). -->
+        <div class="absolute top-0 left-0 right-0 h-9 z-40 select-none" style="-webkit-app-region: drag;"></div>
         <!-- sidebar -->
         <aside class="w-64 border-r border-brand-borderSubtle bg-[#0D0D0F] flex flex-col justify-between flex-shrink-0 z-20 relative">
             <div>
-                <div class="px-6 py-6 border-b border-brand-borderSubtle">
+                <div class="px-6 pt-12 pb-5 border-b border-brand-borderSubtle">
                     <div class="flex items-center gap-3">
                         <div class="flex-shrink-0">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -268,7 +264,8 @@ _INDEX_HTML = r"""<!doctype html>
                         </div>
                         <div>
                             <h1 class="font-medium text-sm tracking-tight text-white">CodeBaton</h1>
-                            <div class="text-xs text-brand-textMuted font-mono mt-0.5 flex items-center gap-1">
+                            <div class="text-xs text-brand-textMuted font-mono mt-0.5 flex items-center gap-1.5">
+                                <span id="conn-dot" class="w-1.5 h-1.5 rounded-full bg-brand-textMuted"></span>
                                 <span id="side-org">…</span>
                             </div>
                         </div>
@@ -324,7 +321,7 @@ _INDEX_HTML = r"""<!doctype html>
 
         <!-- main -->
         <main class="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10 bg-brand-bg">
-            <div class="max-w-5xl w-full mx-auto px-10 py-10 relative">
+            <div class="max-w-5xl w-full mx-auto px-10 pt-12 pb-10 relative">
 
                 <!-- OVERVIEW -->
                 <div id="view-overview" class="view-section active">
@@ -523,6 +520,7 @@ _INDEX_HTML = r"""<!doctype html>
 
     <!-- in-app sign-in screen (shown whenever not signed in) -->
     <div id="signin-screen" class="fixed inset-0 z-[100] hidden items-center justify-center" style="background:#0a0b0e;">
+      <div class="absolute top-0 left-0 right-0 h-9" style="-webkit-app-region: drag;"></div>
       <div class="max-w-sm w-full mx-6 text-center">
         <svg width="48" height="48" viewBox="0 0 44 44" fill="none" class="mx-auto mb-6"><line x1="13" y1="32" x2="23" y2="13" stroke="#3b6dff" stroke-width="6.5" stroke-linecap="round"/><line x1="23" y1="31" x2="33" y2="12" stroke="#00E57A" stroke-width="6.5" stroke-linecap="round"/><circle cx="33" cy="12" r="3.4" fill="#d6ffe9"/></svg>
         <h2 class="text-2xl font-semibold text-white tracking-tight">Welcome to CodeBaton</h2>
@@ -609,7 +607,6 @@ async function poll(){
     if(d.signed_in===false){ showSignin(); return; }
     hideSignin();
     $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-brand-lime';
-    $('title-status').textContent = 'codebaton · @'+(d.me||'?');
     $('side-org').textContent = d.org||'…';
     $('side-handle').textContent = '@'+(d.me||'?');
     $('side-avatar').textContent = initial(d.me);
@@ -618,7 +615,6 @@ async function poll(){
     renderOverview(d); renderConnections(d); renderSessions(d);
   }catch(e){
     $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-red-500';
-    $('title-status').textContent='offline';
   }
 }
 function renderOverview(d){
