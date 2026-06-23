@@ -35,6 +35,24 @@ from .auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
 CALLBACK_TIMEOUT_SECONDS = 180
 
 
+def _stable_binary(binary: str) -> str:
+    """Return a shell-safe path to the binary.
+
+    The desktop app's binary lives under ~/Library/Application Support/... —
+    that path has a SPACE, which the shell splits when the binary is used
+    unquoted in a hook command or slash command (`/bin/sh: .../Application:
+    No such file`). When the path has a space, write a no-space wrapper at
+    ~/.teammate-sync/bin/teammate-sync and use that instead."""
+    if " " not in binary:
+        return binary
+    bindir = Path("~/.teammate-sync/bin").expanduser()
+    bindir.mkdir(parents=True, exist_ok=True)
+    wrapper = bindir / "teammate-sync"
+    wrapper.write_text(f'#!/bin/sh\nexec "{binary}" "$@"\n')
+    wrapper.chmod(0o755)
+    return str(wrapper)
+
+
 def _install_hooks_into_claude_settings(binary: str) -> Path:
     """
     Merge SessionStart / PostToolUse / SessionEnd hooks into ~/.claude/settings.json,
@@ -58,7 +76,7 @@ def _install_hooks_into_claude_settings(binary: str) -> Path:
     for event, op in [("SessionStart", "start"),
                       ("PostToolUse", "heartbeat"),
                       ("SessionEnd", "end")]:
-        cmd = f"{binary} hook {op}"
+        cmd = f'"{binary}" hook {op}'
         hooks[event] = [{"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}]
 
     settings_path.write_text(json.dumps(settings, indent=2))
@@ -399,7 +417,7 @@ Execute this command via the Bash tool and show its full stdout output to
 the user verbatim:
 
 ```
-{binary} {spec["subcmd"]} $ARGUMENTS
+"{binary}" {spec["subcmd"]} $ARGUMENTS
 ```
 
 The CLAUDE_CODE_SESSION_ID and CLAUDE_PROJECT_DIR env vars are set by
@@ -422,6 +440,7 @@ def _wire_claude_integration(binary: str) -> None:
     Idempotent. Shared by `teammate-sync init` and the in-app (dashboard)
     sign-in flow so both wire Claude Code up identically.
     """
+    binary = _stable_binary(binary)
     commands_dir = Path("~/.claude/commands").expanduser()
     commands_dir.mkdir(parents=True, exist_ok=True)
     for retired in _RETIRED_SLASH_COMMANDS:
@@ -430,6 +449,27 @@ def _wire_claude_integration(binary: str) -> None:
         (commands_dir / f"{action}.md").write_text(_slash_command_md(action, binary))
     _install_hooks_into_claude_settings(binary)
     _register_mcp(binary)
+
+
+def refresh_shell_wiring() -> None:
+    """Rewrite the hook + slash-command wiring with the current code.
+
+    Lets fixes to the wiring (e.g. shell-quoting the binary path) propagate
+    on desktop-app launch via self-update — no re-sign-in needed. No-op unless
+    the desktop app set TEAMMATE_SYNC_BIN. MCP isn't touched (it uses an argv
+    array, so it never had the shell-splitting problem)."""
+    import os
+    binary = os.environ.get("TEAMMATE_SYNC_BIN")
+    if not binary:
+        return
+    binary = _stable_binary(binary)
+    commands_dir = Path("~/.claude/commands").expanduser()
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    for retired in _RETIRED_SLASH_COMMANDS:
+        (commands_dir / f"{retired}.md").unlink(missing_ok=True)
+    for action in _INSTALL_ACTIONS:
+        (commands_dir / f"{action}.md").write_text(_slash_command_md(action, binary))
+    _install_hooks_into_claude_settings(binary)
 
 
 def finish_signin(token: str, org: str, backend_url: str) -> str:

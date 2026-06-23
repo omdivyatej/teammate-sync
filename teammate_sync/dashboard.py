@@ -1067,6 +1067,11 @@ def run_dashboard(
     url = f"http://127.0.0.1:{port}/"
     server = _start_http_server_in_thread(backend, port, backend_url)
 
+    # On desktop-app launch, re-apply the Claude Code wiring with current code
+    # so fixes (e.g. shell-quoting the binary path) self-heal via self-update.
+    from . import cli
+    cli.refresh_shell_wiring()
+
     if serve_only:
         # Machine-readable handshake for the Electron host, then block.
         print(json.dumps({"port": port, "url": url}), flush=True)

@@ -293,6 +293,18 @@ class MirrorHandler(FileSystemEventHandler):
         self._lock = threading.Lock()
         self._pending_timer: threading.Timer | None = None
 
+    def dispatch(self, event):
+        # A transient network error (DNS blip, backend hiccup) raised inside an
+        # on_* handler would otherwise propagate into watchdog's observer thread
+        # and kill it permanently — leaving the daemon "up" but no longer
+        # syncing. Catch it here so the watcher survives and retries on the next
+        # filesystem event.
+        try:
+            super().dispatch(event)
+        except Exception as e:
+            path = getattr(event, "dest_path", None) or getattr(event, "src_path", "?")
+            print(f"[sync] watcher error on {path}: {e}; continuing", flush=True)
+
     def _rel_key(self, src_path: str) -> str:
         return str(Path(src_path).relative_to(self.source))
 
