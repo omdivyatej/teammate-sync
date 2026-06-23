@@ -447,7 +447,10 @@ def get_teammate_context(teammate: str) -> str:
     returns a message explaining what's missing.
 
     Args:
-        teammate: The teammate's GitHub handle, case-sensitive.
+        teammate: The teammate's GitHub handle, or a local alias the user
+            set via `teammate-sync alias` (e.g. "om" → "om-divyatej").
+            Aliases resolve automatically; unknown values are treated as
+            handles.
 
     Returns:
         Multi-section text:
@@ -459,6 +462,8 @@ def get_teammate_context(teammate: str) -> str:
           - === Note: <path> === blocks for any other shared .md files
         Capped at ~400KB; truncated with a marker if larger.
     """
+    from .aliases import resolve as _resolve_alias
+    teammate = _resolve_alias(teammate)
     try:
         auth = read_auth()
         backend = HTTPBackend(

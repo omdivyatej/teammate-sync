@@ -281,6 +281,15 @@ SLASH_COMMAND_SPECS = {
         "args_hint": "",
         "description": "Audit which sessions are currently shareable and with whom.",
     },
+    "alias": {
+        "subcmd": "alias",
+        "args_hint": "[name github-handle]",
+        "description": (
+            "Give a teammate a short local nickname so /ask is easy to type "
+            "(e.g. `/alias om om-divyatej`, then `/ask om ...`). No args lists "
+            "your aliases; `--rm <name>` removes one."
+        ),
+    },
 }
 
 # Slash commands no longer in v0.3 — install-commands deletes these files if
@@ -293,15 +302,17 @@ _RETIRED_SLASH_COMMANDS = {
 
 _ASK_SLASH_MD = """---
 description: Ask a connected teammate (or several) a question. Reads their raw Claude Code session context and answers from it.
-argument-hint: "<handle>[,<handle>...] <question>"
+argument-hint: "<handle-or-alias>[,<handle-or-alias>...] <question>"
 ---
 
 The user wants to query teammate-sync. Parse the user's argument as:
-  - first whitespace-separated token = a comma-separated list of GitHub handles
+  - first whitespace-separated token = a comma-separated list of teammate
+    identifiers (a GitHub handle OR a local alias the user set, like "om")
   - everything after the first token = the question text
 
-For each handle in the list, call the MCP tool
-`mcp__teammate-sync__get_teammate_context` with that handle. It returns
+For each identifier in the list, call the MCP tool
+`mcp__teammate-sync__get_teammate_context` with that value verbatim — pass
+aliases through as-is; the tool resolves them to handles itself. It returns
 the raw assembled corpus of that teammate's shared sessions (with active-
 session annotations like [ACTIVE — LIVE NOW] and a freshness stamp).
 
@@ -358,7 +369,7 @@ After showing the output, do NOT add commentary.
 
 # Order matters for the install summary print: list in the order they'd
 # logically be used.
-_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "ask"]
+_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "alias", "ask"]
 
 
 def _wire_claude_integration(binary: str) -> None:
@@ -488,6 +499,34 @@ def cmd_dashboard(args) -> int:
 def cmd_shared(args) -> int:
     from . import share_cli
     return share_cli.cmd_list()
+
+
+def cmd_alias(args) -> int:
+    """Manage local nicknames for teammates so /ask is easy to type."""
+    from . import aliases
+    if args.rm:
+        name = args.rm.strip().lower()
+        if aliases.remove_alias(name):
+            print(f"Removed alias '{name}'.")
+            return 0
+        print(f"No alias named '{name}'.")
+        return 1
+    if not args.name:
+        current = aliases.read_aliases()
+        if not current:
+            print("No aliases yet. Set one:  teammate-sync alias om om-divyatej")
+            return 0
+        print("Aliases:")
+        for name, handle in sorted(current.items()):
+            print(f"  {name} -> {handle}")
+        return 0
+    if not args.handle:
+        print("Usage: teammate-sync alias <name> <github-handle>")
+        return 1
+    name = args.name.strip().lower()
+    aliases.set_alias(name, args.handle)
+    print(f"Alias set: {name} -> {args.handle.strip()}   (use it: /ask {name} <question>)")
+    return 0
 
 
 def cmd_daemon(args) -> int:
@@ -798,6 +837,18 @@ def main() -> int:
 
     sub.add_parser("shared",
                    help="Audit which sessions are shareable + with whom.").set_defaults(func=cmd_shared)
+
+    p_alias = sub.add_parser(
+        "alias",
+        help="Nickname a teammate's handle for easy /ask (e.g. alias om om-divyatej).",
+    )
+    p_alias.add_argument("name", nargs="?", default=None,
+                         help="Short local name, e.g. 'om'. Omit to list all aliases.")
+    p_alias.add_argument("handle", nargs="?", default=None,
+                         help="The teammate's GitHub handle, e.g. 'om-divyatej'.")
+    p_alias.add_argument("--rm", metavar="NAME", default=None,
+                         help="Remove the alias with this name.")
+    p_alias.set_defaults(func=cmd_alias)
 
     # ── Daemon lifecycle ──
     p_up = sub.add_parser(
