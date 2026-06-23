@@ -524,8 +524,26 @@ def cmd_alias(args) -> int:
         print("Usage: teammate-sync alias <name> <github-handle>")
         return 1
     name = args.name.strip().lower()
-    aliases.set_alias(name, args.handle)
-    print(f"Alias set: {name} -> {args.handle.strip()}   (use it: /ask {name} <question>)")
+    handle = args.handle.strip()
+
+    # Validate the handle is a real member of your workspace, so typos are
+    # caught now rather than as an empty /ask later. Match case-insensitively
+    # and store the workspace's canonical casing.
+    from . import share_cli
+    try:
+        members = share_cli.workspace_handles()
+    except (FileNotFoundError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    canonical = next((h for h in members if h.lower() == handle.lower()), None)
+    if canonical is None:
+        print(f"'{handle}' isn't a member of your workspace. Members:")
+        for h in sorted(members):
+            print(f"  - {h}")
+        return 1
+
+    aliases.set_alias(name, canonical)
+    print(f"Alias set: {name} -> {canonical}   (use it: /ask {name} <question>)")
     return 0
 
 

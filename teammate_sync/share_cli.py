@@ -532,6 +532,25 @@ def cmd_show(handle: str, session_id: str | None = None) -> int:
 
 # ─── /teammates ────────────────────────────────────────────────────────────
 
+def workspace_handles() -> list[str]:
+    """All GitHub handles in the caller's workspace (org members).
+
+    Raises FileNotFoundError/ValueError if not signed in, or ValueError if
+    the backend rejects the request."""
+    from .auth import read_auth
+    import httpx
+    auth = read_auth()
+    r = httpx.get(
+        f"{auth['backend_url'].rstrip('/')}/v1/teammates",
+        params={"org": auth["org"]},
+        headers={"Authorization": f"Bearer {auth['token']}"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise ValueError(f"Backend rejected the request ({r.status_code}): {r.text}")
+    return [t["github_handle"] for t in r.json().get("teammates", [])]
+
+
 def cmd_teammates() -> int:
     """Slash command wrapper — lists org members."""
     from .auth import read_auth
