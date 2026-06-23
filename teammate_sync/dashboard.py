@@ -208,8 +208,9 @@ _INDEX_HTML = r"""<!doctype html>
             background: linear-gradient(to bottom, transparent, rgba(0,229,122,0.03) 50%, transparent);
             animation: scan 8s linear infinite; pointer-events:none; }
         @keyframes scan { 0%{transform:translateY(-100%)} 100%{transform:translateY(100%)} }
-        .view-section { display: none; }
-        .view-section.active { display: block; animation: fadeSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) forwards; }
+        /* force-hide inactive views (beats Tailwind display utilities that load after this) */
+        .view-section:not(.active) { display: none !important; }
+        .view-section.active { animation: fadeSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) forwards; }
         @keyframes fadeSlideUp { 0%{opacity:0;transform:translateY(8px)} 100%{opacity:1;transform:translateY(0)} }
         .toggle-checkbox:checked + .toggle-label { background-color: rgba(0,229,122,0.15); border-color: rgba(0,229,122,0.3); }
         .toggle-checkbox:checked + .toggle-label .toggle-dot { transform: translateX(100%); background-color: #00E57A; }
@@ -421,8 +422,8 @@ _INDEX_HTML = r"""<!doctype html>
                 </div>
 
                 <!-- ACTIVITY -->
-                <div id="view-activity" class="view-section h-full flex flex-col pb-10">
-                    <header class="mb-6 flex items-end justify-between flex-shrink-0">
+                <div id="view-activity" class="view-section">
+                    <header class="mb-6 flex items-end justify-between">
                         <div>
                             <h2 class="text-2xl font-medium text-white tracking-tight">Activity</h2>
                             <p class="text-sm text-brand-textMuted mt-1">Live events from the sync engine.</p>
@@ -431,8 +432,8 @@ _INDEX_HTML = r"""<!doctype html>
                             <button id="btn-pause-log" class="px-3 py-1.5 text-xs font-mono font-medium text-brand-textMuted bg-brand-surface border border-brand-borderSubtle hover:border-white/20 rounded transition-colors w-20 text-center">Pause</button>
                         </div>
                     </header>
-                    <div class="flex-1 min-h-[400px] rounded-lg border border-brand-borderSubtle bg-black p-1 relative overflow-hidden flex flex-col">
-                        <div id="activity-log" class="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-brand-textMuted"></div>
+                    <div class="rounded-lg border border-brand-borderSubtle bg-black overflow-hidden">
+                        <div id="activity-log" class="overflow-y-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-brand-textMuted" style="height: calc(100vh - 250px);"></div>
                     </div>
                 </div>
 
