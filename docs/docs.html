@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeBaton — Docs</title>
+<meta name="description" content="CodeBaton documentation: install, the four slash commands, daemon lifecycle, privacy, and team setup.">
+<link rel="canonical" href="https://omdivyatej.github.io/teammate-sync/docs.html">
+<link rel="icon" href="/teammate-sync/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/teammate-sync/favicon.ico" sizes="any">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0c; --panel:#121214; --line:#26262e; --line2:#33333f;
+    --text:#f1f1f4; --dim:#a3a3ad; --mute:#6c6c79;
+    --green:#00E57A; --blue:#3b6dff;
+    --sans:'Inter',-apple-system,sans-serif; --mono:'JetBrains Mono',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font:16px/1.65 var(--sans);
+    background-image:radial-gradient(800px 400px at 90% -8%, rgba(59,109,255,0.05), transparent 60%);
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--green);text-decoration:none}
+  a:hover{text-decoration:underline;text-underline-offset:3px}
+  code{font-family:var(--mono);font-size:0.86em;background:#16161b;border:1px solid var(--line);
+    padding:1px 6px;border-radius:5px;color:#d6ffe9}
+  pre{background:#0c0c10;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:var(--dim);font-size:13.5px;line-height:1.7}
+  .pr{color:var(--green)} .cmt{color:var(--mute);font-style:italic}
+
+  /* nav */
+  nav{position:sticky;top:0;z-index:30;background:rgba(10,10,12,0.8);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line)}
+  nav .in{max-width:1180px;margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:600}
+  .brand b{color:var(--green)} .brand svg{width:22px;height:22px}
+  nav .sp{flex:1}
+  nav .nl{color:var(--dim);font-size:14.5px} nav .nl:hover{color:var(--text);text-decoration:none}
+
+  /* layout */
+  .shell{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px 1fr;gap:48px}
+  @media(max-width:880px){.shell{grid-template-columns:1fr}.toc{display:none}}
+  .toc{position:sticky;top:84px;align-self:start;padding-top:40px;height:calc(100vh - 84px);overflow-y:auto}
+  .toc h4{font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--mute);margin:18px 0 8px}
+  .toc a{display:block;color:var(--dim);font-size:14px;padding:4px 0}
+  .toc a:hover{color:var(--text);text-decoration:none}
+  main{padding:40px 0 100px;min-width:0;max-width:760px}
+  h1{font-size:2.4rem;letter-spacing:-0.03em;margin-bottom:8px}
+  .sub{color:var(--dim);font-size:1.1rem;margin-bottom:36px}
+  section{padding-top:36px;margin-top:36px;border-top:1px solid var(--line)}
+  section:first-of-type{border-top:none;margin-top:24px}
+  h2{font-size:1.5rem;letter-spacing:-0.02em;margin-bottom:6px;scroll-margin-top:80px}
+  h2 .hash{color:var(--mute);font-family:var(--mono);font-weight:400}
+  h3{font-size:1.12rem;margin:26px 0 8px;letter-spacing:-0.01em}
+  p{color:var(--dim);margin:12px 0}
+  ul{color:var(--dim);margin:12px 0;padding-left:22px} li{margin:6px 0}
+  strong{color:var(--text);font-weight:600}
+  .note{border-left:2px solid var(--green);background:rgba(0,229,122,0.05);padding:12px 16px;border-radius:0 8px 8px 0;margin:18px 0;font-size:14.5px}
+  .note.blue{border-color:var(--blue);background:rgba(59,109,255,0.06)}
+  .cmd-table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14.5px}
+  .cmd-table td{padding:11px 12px;border-top:1px solid var(--line);vertical-align:top}
+  .cmd-table td:first-child{white-space:nowrap;width:1%}
+  .cmd-table code{color:var(--green)}
+  footer{border-top:1px solid var(--line);margin-top:60px;padding:28px 24px;color:var(--mute);font-size:14px;text-align:center}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="in">
+    <a class="brand" href="./">
+      <svg viewBox="0 0 44 44" fill="none"><line x1="13" y1="32" x2="23" y2="13" stroke="#3b6dff" stroke-width="6.5" stroke-linecap="round"/><line x1="23" y1="31" x2="33" y2="12" stroke="#00E57A" stroke-width="6.5" stroke-linecap="round"/><circle cx="33" cy="12" r="3.4" fill="#d6ffe9"/></svg>
+      Code<b>Baton</b>
+    </a>
+    <span class="sp"></span>
+    <a class="nl" href="./">Home</a>
+    <a class="nl" href="https://github.com/omdivyatej/teammate-sync">GitHub</a>
+  </div>
+</nav>
+
+<div class="shell">
+  <aside class="toc">
+    <h4>Start</h4>
+    <a href="#what">What it is</a>
+    <a href="#install">Install</a>
+    <a href="#setup">First-time setup</a>
+    <h4>Use</h4>
+    <a href="#commands">The four commands</a>
+    <a href="#daemon">Daemon &amp; app</a>
+    <a href="#team">Team setup</a>
+    <h4>More</h4>
+    <a href="#privacy">Privacy</a>
+    <a href="#trouble">Troubleshooting</a>
+    <a href="#uninstall">Uninstall</a>
+  </aside>
+
+  <main>
+    <h1>Documentation</h1>
+    <p class="sub">Everything to install CodeBaton and query a teammate's live Claude Code session.</p>
+
+    <section id="what">
+      <h2><span class="hash">#</span> What it is</h2>
+      <p>CodeBaton lets you query a teammate's <strong>live Claude Code session</strong> — the one running locally on their own laptop — and get a cited answer in seconds: what they're building, what they decided, what they ruled out. No pasted transcripts, no cloud sandbox, no interrupting them.</p>
+      <p>It ships two ways: a <strong>desktop app</strong> (a tray + dashboard, everything bundled) and a <strong>CLI</strong> (for terminal-first devs). Both run the same engine and expose the same four slash commands inside Claude Code.</p>
+    </section>
+
+    <section id="install">
+      <h2><span class="hash">#</span> Install</h2>
+
+      <h3>Desktop app (macOS)</h3>
+      <p>Download the <code>.dmg</code>, drag CodeBaton to Applications, and open it. It bundles its own Python runtime — no prerequisites. Apple Silicon, beta, currently unsigned (right-click the app → <strong>Open</strong> the first time to bypass Gatekeeper).</p>
+      <p><a href="https://github.com/omdivyatej/teammate-sync/releases/download/desktop-v0.6.0/CodeBaton-0.6.0-arm64.dmg">Download for Mac ↓</a></p>
+
+      <h3>CLI (macOS · Linux · Windows)</h3>
+      <pre><code><span class="pr">❯</span> pipx install teammate-sync
+<span class="pr">❯</span> teammate-sync init   <span class="cmt"># GitHub sign-in</span>
+<span class="pr">❯</span> teammate-sync up     <span class="cmt"># start the background daemon</span></code></pre>
+      <p>Then <strong>restart Claude Code</strong> so it picks up the new hooks, MCP server, and slash commands. Requires <a href="https://pipx.pypa.io">pipx</a> and Python 3.11+.</p>
+      <div class="note">No Anthropic API key needed. Your own Claude Code does the reasoning over a teammate's context — CodeBaton just delivers it.</div>
+    </section>
+
+    <section id="setup">
+      <h2><span class="hash">#</span> First-time setup</h2>
+      <p><code>teammate-sync init</code> (run once) does all of this:</p>
+      <ul>
+        <li>Opens your browser to <strong>GitHub OAuth</strong>. On the org-access screen, click <strong>Grant</strong> for the org you want as your workspace.</li>
+        <li>Saves your token to <code>~/.teammate-sync/auth.json</code> (mode 0600, never synced).</li>
+        <li>Asks which GitHub org is your workspace (teammates are discovered from there).</li>
+        <li>Installs the <code>/connect</code> <code>/ask</code> <code>/shared</code> <code>/disconnect</code> slash commands.</li>
+        <li>Wires session hooks into <code>~/.claude/settings.json</code> and registers the MCP server.</li>
+      </ul>
+      <div class="note blue">In the desktop app, sign-in currently opens a Terminal to run <code>init</code> (browser OAuth + a one-time org pick). A fully in-app sign-in is on the way.</div>
+    </section>
+
+    <section id="commands">
+      <h2><span class="hash">#</span> The four commands</h2>
+      <p>Type these inside any Claude Code session.</p>
+      <table class="cmd-table">
+        <tr><td><code>/connect &lt;teammate&gt;</code></td><td>Share <strong>this</strong> session with a teammate. They <code>/connect</code> you back — mutual means trusted. Per session, you choose what's visible. No args lists workspace status.</td></tr>
+        <tr><td><code>/ask &lt;teammate&gt; &lt;question&gt;</code></td><td>Query their live session in plain language. Cited answer in seconds. Comma-separate handles to ask several at once.</td></tr>
+        <tr><td><code>/shared</code></td><td>Audit what you're sharing right now, and with whom.</td></tr>
+        <tr><td><code>/disconnect [&lt;teammate&gt;]</code></td><td>No args wipes every connection. Pass a handle to remove just that one.</td></tr>
+      </table>
+      <p>Sharing is <strong>per session</strong>: every new Claude Code session starts un-shared, even with people you're connected to. Re-run <code>/connect &lt;teammate&gt;</code> in each session you want visible. When a session ends, its share auto-revokes.</p>
+    </section>
+
+    <section id="daemon">
+      <h2><span class="hash">#</span> Daemon &amp; app</h2>
+      <p>A small background daemon syncs only the sessions you've connected. Manage it from the CLI:</p>
+      <table class="cmd-table">
+        <tr><td><code>teammate-sync up</code></td><td>Start the daemon in the background (no terminal to keep open).</td></tr>
+        <tr><td><code>teammate-sync down</code></td><td>Stop it.</td></tr>
+        <tr><td><code>teammate-sync logs -f</code></td><td>Tail the daemon log.</td></tr>
+        <tr><td><code>teammate-sync upgrade</code></td><td>One-shot: stop → upgrade → refresh commands → restart.</td></tr>
+        <tr><td><code>teammate-sync dashboard</code></td><td>Open the desktop dashboard window (connections, sessions, activity, settings).</td></tr>
+        <tr><td><code>teammate-sync app</code></td><td>macOS menu-bar tray. Add <code>--install-launchagent</code> to auto-start at login.</td></tr>
+      </table>
+      <p>The desktop <code>.dmg</code> bundles the tray + dashboard, so you don't run these by hand. The CLI path uses <code>up</code>/<code>down</code> and is fully headless unless you opt into <code>app</code>.</p>
+    </section>
+
+    <section id="team">
+      <h2><span class="hash">#</span> Team setup</h2>
+      <p>Everyone installs CodeBaton and signs in to the <strong>same GitHub org</strong>. To query a teammate, both of you connect:</p>
+      <pre><code><span class="cmt"># on your laptop, in Claude Code</span>
+<span class="pr">❯</span> /connect saketh
+<span class="cmt"># on saketh's laptop</span>
+<span class="pr">❯</span> /connect &lt;your-handle&gt;
+<span class="cmt"># now either side can ask</span>
+<span class="pr">❯</span> /ask saketh what did you decide about pagination?</code></pre>
+      <p>Mutual <code>/connect</code> auto-accepts — no separate approval step. If only one side connects, the other sees a pending invite.</p>
+    </section>
+
+    <section id="privacy">
+      <h2><span class="hash">#</span> Privacy</h2>
+      <ul>
+        <li><strong>Default: nothing is shared.</strong> The daemon runs but stays idle until you <code>/connect</code>.</li>
+        <li><strong>Per-session, per-recipient.</strong> You opt one session in, to specific people you name. Other sessions never leave your machine.</li>
+        <li><strong>Org-scoped.</strong> Only members of your GitHub org can connect at all.</li>
+        <li><strong>Auto-revoke.</strong> Ending the session — or running <code>/disconnect</code> — wipes the shared copy immediately.</li>
+        <li><strong>Token stays local.</strong> Your GitHub token lives in <code>~/.teammate-sync/auth.json</code> and is never uploaded.</li>
+      </ul>
+    </section>
+
+    <section id="trouble">
+      <h2><span class="hash">#</span> Troubleshooting</h2>
+      <h3>Slash commands don't appear</h3>
+      <p>Fully restart Claude Code — custom commands load at session start.</p>
+      <h3>/ask returns "not found" or empty</h3>
+      <p>The other side's daemon may not be uploading. Check <code>teammate-sync logs</code> on their machine. Also confirm they ran <code>/connect &lt;your-handle&gt;</code> in the session you're trying to read — trust persists, but sharing is per session.</p>
+      <h3>/mcp shows "Failed to connect"</h3>
+      <p>The MCP entry points at a binary that's moved (e.g. after a reinstall). Re-run <code>teammate-sync init</code>.</p>
+      <h3>Daemon won't stay running</h3>
+      <p><code>teammate-sync logs</code> for the error, then <code>teammate-sync down &amp;&amp; teammate-sync up</code>. First request after idle can be slow (backend cold-start, ~5–10s).</p>
+      <h3>The app shows the "Apple cannot verify" warning</h3>
+      <p>The beta build is unsigned. Right-click the app → <strong>Open</strong> once to allow it.</p>
+    </section>
+
+    <section id="uninstall">
+      <h2><span class="hash">#</span> Uninstall</h2>
+      <pre><code><span class="pr">❯</span> teammate-sync down
+<span class="pr">❯</span> pipx uninstall teammate-sync
+<span class="pr">❯</span> claude mcp remove teammate-sync --scope user
+<span class="pr">❯</span> rm -rf ~/.teammate-sync
+<span class="cmt"># also remove the slash commands + the hooks block in ~/.claude/settings.json</span></code></pre>
+    </section>
+  </main>
+</div>
+
+<footer>CodeBaton · <a href="./">home</a> · <a href="https://github.com/omdivyatej/teammate-sync">github</a> · <a href="mailto:om@turgon.ai">om@turgon.ai</a></footer>
+
+</body>
+</html>

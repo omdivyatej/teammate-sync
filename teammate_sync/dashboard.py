@@ -505,12 +505,31 @@ _INDEX_HTML = r"""<!doctype html>
                                 </label>
                             </div>
                         </section>
+
+                        <section class="bg-[#0D0D0F] border border-brand-borderSubtle rounded-lg p-6 flex items-center justify-between gap-4">
+                            <div>
+                                <h4 class="text-sm font-medium text-white">Sign out</h4>
+                                <p class="text-xs text-brand-textMuted mt-0.5">Stop the daemon and clear your saved sign-in. You can sign back in right after.</p>
+                            </div>
+                            <button id="btn-signout" class="px-4 py-2 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 rounded transition-colors whitespace-nowrap">Sign out</button>
+                        </section>
                     </div>
                 </div>
 
                 <div class="h-10"></div>
             </div>
         </main>
+    </div>
+
+    <!-- signed-out overlay -->
+    <div id="signedout" class="fixed inset-0 z-[100] hidden items-center justify-center bg-black/80" style="backdrop-filter: blur(6px);">
+      <div class="max-w-md w-full mx-6 rounded-2xl border border-white/15 bg-[#131419] p-8 text-center shadow-2xl">
+        <svg width="40" height="40" viewBox="0 0 44 44" fill="none" class="mx-auto mb-5"><line x1="13" y1="32" x2="23" y2="13" stroke="#3b6dff" stroke-width="6.5" stroke-linecap="round"/><line x1="23" y1="31" x2="33" y2="12" stroke="#00E57A" stroke-width="6.5" stroke-linecap="round"/><circle cx="33" cy="12" r="3.4" fill="#d6ffe9"/></svg>
+        <h3 class="text-lg font-medium text-white">Signed out</h3>
+        <p class="text-sm text-brand-textMuted mt-2">Your sign-in was cleared and the daemon stopped. Sign back in with GitHub to start again.</p>
+        <button id="btn-signin" class="mt-6 w-full py-2.5 rounded-md bg-brand-lime text-black text-sm font-semibold hover:opacity-90 transition">Sign in with GitHub</button>
+        <p id="signin-hint" class="text-xs text-brand-textMuted mt-3 hidden">A Terminal window opened — finish sign-in there, then reopen CodeBaton.</p>
+      </div>
     </div>
 
 <script>
@@ -680,6 +699,18 @@ document.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('cha
   try{ await post(path,{enabled:this.checked}); }catch(e){ alert('Failed: '+e.message); }
 }));
 
+// ── sign out / sign in ──
+const signedout = $('signedout');
+$('btn-signout').addEventListener('click', async ()=>{
+  if(!confirm('Sign out? This stops the daemon and clears your saved sign-in.')) return;
+  try{ await post('/logout',{}); }catch(e){}
+  signedout.classList.remove('hidden'); signedout.classList.add('flex');
+});
+$('btn-signin').addEventListener('click', async ()=>{
+  try{ await post('/signin',{}); $('signin-hint').classList.remove('hidden'); }
+  catch(e){ alert('Failed: '+e.message); }
+});
+
 // boot
 poll(); refreshLogs(); go('view-overview');
 setInterval(poll, 3000);
@@ -818,6 +849,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "session_id required"})
                     return
                 self._send_json(200, self.backend.unshare_session(sid))
+                return
+            if path == "/logout":
+                # Stop the daemon, then delete the saved auth so the user can
+                # re-onboard from scratch (re-watch the sign-in flow).
+                subprocess.run([_resolve_self_binary(), "down"], capture_output=True, timeout=10)
+                from .auth import auth_file_path
+                p = auth_file_path()
+                if p.exists():
+                    p.unlink()
+                self._send_json(200, {"ok": True})
+                return
+            if path == "/signin":
+                # Re-run `init` (browser OAuth + org pick). It's interactive,
+                # so open it in a Terminal on macOS; elsewhere return the command.
+                binary = _resolve_self_binary()
+                if sys.platform == "darwin":
+                    cmd = f"{binary} init"
+                    script = (f'tell application "Terminal" to do script "{cmd}"\n'
+                              f'tell application "Terminal" to activate')
+                    subprocess.Popen(["osascript", "-e", script])
+                    self._send_json(200, {"ok": True})
+                else:
+                    self._send_json(200, {"ok": False, "command": f"{binary} init"})
                 return
             self._send_json(404, {"error": f"unknown path {path}"})
         except Exception as e:
