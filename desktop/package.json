@@ -21,6 +21,7 @@
     "extends": null,
     "appId": "dev.codebaton.app",
     "productName": "CodeBaton",
+    "afterSign": "build/notarize.js",
     "directories": {
       "output": "dist",
       "buildResources": "build"

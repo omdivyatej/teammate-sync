@@ -9,6 +9,11 @@ __pycache__/
 build/
 dist/
 
+# ...but the Electron build resources (entitlements, notarize hook) are
+# source, not artifacts — keep them tracked.
+!desktop/build/
+!desktop/build/**
+
 # Local state / control files (these are per-machine, not source)
 **/.sync-state.json
 **/.active-sessions.json
