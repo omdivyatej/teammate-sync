@@ -114,6 +114,20 @@ def cmd_share(recipients: list[str]) -> int:
         return 1
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or str(Path.cwd())
 
+    # Hard-stop if the sync engine (daemon) isn't running. The daemon is what
+    # uploads the session — without it, /connect would register a share that
+    # silently never flows. Refuse like Docker does when its engine is off.
+    from .cli import _read_pid, _pid_alive  # lazy: cli imports share_cli
+    _pid = _read_pid()
+    if not (_pid and _pid_alive(_pid)):
+        again = " ".join(recipients) if recipients else "<teammate>"
+        print("✗ Can't share — the CodeBaton sync engine is not running.")
+        print('  Open CodeBaton and click "Start Engine" (or run: teammate-sync up),')
+        print(f"  then run /connect {again} again.")
+        print()
+        print("  Nothing was shared.")
+        return 0
+
     # Resolve recipients. If none given, use my accepted connections.
     try:
         backend = _get_backend()
