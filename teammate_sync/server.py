@@ -84,7 +84,7 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
     except Exception as e:
         return f"[Error decoding {filename}: {e}]", 0.0
 
-    # Markers that indicate a tool_result body is teammate-sync CLI output
+    # Markers that indicate a tool_result body is teammate-sync CLI/MCP output
     # rather than meaningful conversation. Used to drop bookkeeping turns.
     _TEAMMATE_OUTPUT_MARKERS = (
         "now shared with",
@@ -96,6 +96,14 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
         "Disconnected from",
         "Total shared sessions",
         "Skipped. The MCP server",
+        "Can't share",
+        "Nothing was shared",
+        "sync engine is not running",
+        "No context visible from",
+        "Not found in shared context",
+        "teammate-sync context — teammate:",
+        "Alias set:",
+        "tool_reference",
     )
     _SLASH_PREAMBLE = "Execute this command via the Bash tool"
     # A user turn that is the /ask prompt expansion Claude Code injects.
@@ -112,9 +120,13 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
     def _is_teammate_sync_tool_use(blocks: list) -> bool:
         for b in blocks:
             if isinstance(b, dict) and b.get("type") == "tool_use":
+                name = str(b.get("name", ""))
+                if name.startswith("mcp__teammate-sync__"):
+                    return True  # nested MCP query
                 inp = b.get("input", {}) or {}
-                cmd = str(inp.get("command", ""))
-                if "teammate-sync" in cmd:
+                # Bash `teammate-sync …`, or a ToolSearch selecting the MCP tool.
+                blob = f"{inp.get('command', '')} {inp.get('query', '')}"
+                if "teammate-sync" in blob:
                     return True
         return False
 
@@ -201,6 +213,17 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
         if any(m in content_text for m in _ASK_EXPANSION_MARKERS):
             continue
         if content_text and any(m in content_text for m in _TS_OUTPUT_MARKERS):
+            continue
+
+        # Drop ANY turn that invokes teammate-sync or carries its output — the
+        # /connect//ask execution (Claude running the CLI + its result), nested
+        # MCP calls, ToolSearch selecting the MCP tool, the "Can't share" guard
+        # message, etc. Applies regardless of skip_mode (the /connect execution
+        # turns arrive after skip_mode has already ended).
+        if isinstance(block_content, list) and (
+            _is_teammate_sync_tool_use(block_content)
+            or _is_teammate_sync_tool_result(block_content)
+        ):
             continue
 
         # Skip the host-Claude answer to an /ask (one assistant text turn after
