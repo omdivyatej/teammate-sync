@@ -845,21 +845,38 @@ def _ver_tuple(v: str) -> tuple:
     return tuple(int(x) for x in v.split(".") if x.isdigit())
 
 
+def _update_status_path() -> Path:
+    return Path("~/.teammate-sync/update-status.json").expanduser()
+
+
+def _write_update_status(**fields) -> None:
+    """Publish the current update stage so the dashboard can show a banner.
+    States: checking | uptodate | downloading | ready | error | offline."""
+    import time
+    p = _update_status_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fields["ts"] = time.time()
+    p.write_text(json.dumps(fields))
+
+
 def cmd_self_update(args) -> int:
     """Install the latest teammate-sync from PyPI into a user-writable dir so
     the desktop app updates without re-downloading the .dmg.
 
     The app puts --target on PYTHONPATH ahead of the bundled package, so on the
-    next launch the daemon, MCP server, hooks, and dashboard all run new code."""
+    next launch the daemon, MCP server, hooks, and dashboard all run new code.
+    Progress is published to update-status.json for the dashboard banner."""
     import importlib.metadata as _md
     import subprocess as _sp
 
     target = args.target
+    _write_update_status(state="checking")
     try:
         latest = httpx.get(
             "https://pypi.org/pypi/teammate-sync/json", timeout=10
         ).json()["info"]["version"]
     except (httpx.HTTPError, KeyError, ValueError) as e:
+        _write_update_status(state="offline")
         print(f"self-update: skipped (cannot reach PyPI: {e})")
         return 0
 
@@ -869,9 +886,11 @@ def cmd_self_update(args) -> int:
         current = "0"
 
     if _ver_tuple(latest) <= _ver_tuple(current):
+        _write_update_status(state="uptodate", current=current)
         print(f"self-update: up to date ({current})")
         return 0
 
+    _write_update_status(state="downloading", current=current, latest=latest)
     print(f"self-update: {current} -> {latest}; installing to {target} …")
     res = _sp.run(
         [sys.executable, "-m", "pip", "install", "--upgrade",
@@ -879,8 +898,10 @@ def cmd_self_update(args) -> int:
         capture_output=True, text=True,
     )
     if res.returncode != 0:
+        _write_update_status(state="error", message="install failed")
         print(f"self-update: pip failed: {res.stderr.strip()[:300]}")
         return 1
+    _write_update_status(state="ready", current=current, latest=latest)
     print(f"self-update: installed {latest}. Restart CodeBaton to apply.")
     return 0
 

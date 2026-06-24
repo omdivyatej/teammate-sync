@@ -238,10 +238,12 @@ _INDEX_HTML = r"""<!doctype html>
         @keyframes float { 0%,100%{transform:translate(25%,25%) rotate(0)} 50%{transform:translate(25%,20%) rotate(3deg)} }
         @keyframes popIn { 0%{opacity:0;transform:scale(0.5)} 80%{transform:scale(1.15)} 100%{opacity:1;transform:scale(1)} }
         @keyframes blinkCursor { 0%,100%{opacity:1} 50%{opacity:0} }
+        @keyframes updateBar { 0%{transform:translateX(-120%)} 100%{transform:translateX(320%)} }
         .animate-glow-pulse { animation: glowPulse 4s ease-in-out infinite; }
         .animate-float { animation: float 8s ease-in-out infinite; }
         .animate-pop-in { animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards; }
         .animate-blink { animation: blinkCursor 1s step-end infinite; }
+        .animate-update-bar { animation: updateBar 1.1s ease-in-out infinite; }
     </style>
 </head>
 <body class="bg-brand-bg text-brand-text font-sans h-screen w-screen overflow-hidden flex flex-col selection:bg-brand-lime selection:text-black antialiased">
@@ -313,7 +315,7 @@ _INDEX_HTML = r"""<!doctype html>
                     <div id="side-avatar" class="w-8 h-8 rounded-full border border-white/10 grid place-items-center text-sm font-semibold text-brand-lime bg-brand-limeMuted">?</div>
                     <div class="flex-1 min-w-0">
                         <p id="side-handle" class="text-sm font-medium text-white truncate">…</p>
-                        <p class="text-xs text-brand-textMuted truncate font-mono">connected</p>
+                        <p class="text-xs text-brand-textMuted truncate font-mono">signed in</p>
                     </div>
                 </div>
             </div>
@@ -322,6 +324,18 @@ _INDEX_HTML = r"""<!doctype html>
         <!-- main -->
         <main class="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10 bg-brand-bg">
             <div class="max-w-5xl w-full mx-auto px-10 pt-12 pb-10 relative">
+
+                <!-- UPDATE BANNER (shown only while checking / downloading / ready) -->
+                <div id="update-banner" class="hidden mb-6 rounded-lg border px-4 py-3 flex items-center gap-3 text-sm">
+                    <span id="update-icon" class="flex-shrink-0"></span>
+                    <div class="flex-1 min-w-0">
+                        <p id="update-text" class="text-white font-medium"></p>
+                        <p id="update-sub" class="hidden text-brand-textMuted text-xs mt-0.5"></p>
+                        <div id="update-bar-wrap" class="hidden mt-2 h-1 w-full rounded-full bg-white/10 overflow-hidden">
+                            <div class="h-full w-1/3 rounded-full bg-brand-lime animate-update-bar"></div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- OVERVIEW -->
                 <div id="view-overview" class="view-section active">
@@ -359,7 +373,8 @@ _INDEX_HTML = r"""<!doctype html>
                             <div class="flex items-center justify-between mb-4">
                                 <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Connections</span>
                             </div>
-                            <div class="flex items-baseline gap-2"><span id="stat-conn" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-[#61C554]">connected</span></div>
+                            <div class="flex items-baseline gap-2"><span id="stat-conn" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-[#61C554]">teammates</span></div>
+                            <p class="text-[11px] text-brand-textMuted mt-2 leading-snug">Standing trust. Persists across restarts — separate from what you're sharing right now.</p>
                         </div>
                         <div class="rounded-lg border border-brand-lime/25 bg-[#0D0D0F] p-5 hover:border-brand-lime/45 transition-all hover:-translate-y-1 shadow-[0_0_36px_-16px_rgba(0,229,122,0.6)]">
                             <div class="flex items-center justify-between mb-4">
@@ -777,9 +792,40 @@ document.addEventListener('click', async e=>{
   }
 });
 
+// ── update banner ──
+function renderUpdate(u){
+  const b=$('update-banner'), icon=$('update-icon'), text=$('update-text'),
+        sub=$('update-sub'), bar=$('update-bar-wrap');
+  bar.classList.add('hidden'); sub.classList.add('hidden');
+  const s=u&&u.state;
+  if(s==='checking'){
+    b.className='mb-6 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 flex items-center gap-3 text-sm';
+    icon.innerHTML='<span class="block w-2 h-2 rounded-full bg-brand-textMuted animate-pulse"></span>';
+    text.textContent='Checking for updates…';
+  } else if(s==='downloading'){
+    b.className='mb-6 rounded-lg border border-brand-lime/30 bg-brand-lime/[0.06] px-4 py-3 flex items-center gap-3 text-sm';
+    icon.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00E57A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>';
+    text.textContent='Downloading update'+(u.latest?(' v'+u.latest):'')+'…';
+    bar.classList.remove('hidden');
+  } else if(s==='ready'){
+    b.className='mb-6 rounded-lg border border-brand-lime/40 bg-brand-lime/[0.08] px-4 py-3 flex items-center gap-3 text-sm';
+    icon.innerHTML='<span class="block w-2 h-2 rounded-full bg-brand-lime shadow-[0_0_8px_rgba(0,229,122,0.7)]"></span>';
+    text.textContent='Update'+(u.latest?(' v'+u.latest):'')+' downloaded';
+    sub.textContent='Quit CodeBaton (⌘Q) and reopen to apply it.';
+    sub.classList.remove('hidden');
+  } else {
+    b.classList.add('hidden'); return;
+  }
+  b.classList.remove('hidden');
+}
+async function pollUpdate(){
+  try{ renderUpdate(await getJ('/update/status')); }catch(e){}
+}
+
 // boot
-poll(); refreshLogs(); go('view-overview');
+poll(); refreshLogs(); go('view-overview'); pollUpdate();
 setInterval(poll, 3000);
+setInterval(pollUpdate, 4000);
 setInterval(()=>{ if(active==='view-activity') refreshLogs(); }, 3000);
 </script>
 </body></html>
@@ -835,6 +881,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 snap["daemon"] = _daemon_status()
                 snap["signed_in"] = True
                 self._send_json(200, snap)
+                return
+            if path == "/update/status":
+                p = Path("~/.teammate-sync/update-status.json").expanduser()
+                if p.exists():
+                    self._send(200, p.read_bytes(), "application/json")
+                else:
+                    self._send_json(200, {"state": "idle"})
                 return
             if path == "/auth/status":
                 self._send_json(200, {
@@ -1071,6 +1124,17 @@ def run_dashboard(
     # so fixes (e.g. shell-quoting the binary path) self-heal via self-update.
     from . import cli
     cli.refresh_shell_wiring()
+
+    # Auto-start the sync engine on open when signed in, so the app is "on" the
+    # moment you launch it instead of showing a stopped engine. (Sharing is
+    # still per Claude Code session — the engine just being up shares nothing
+    # until you /connect a session.)
+    if backend is not None and not _daemon_status()["alive"]:
+        try:
+            subprocess.run([_resolve_self_binary(), "up"],
+                           capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
     if serve_only:
         # Machine-readable handshake for the Electron host, then block.
