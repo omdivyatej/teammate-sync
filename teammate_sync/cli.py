@@ -35,15 +35,26 @@ from .auth import DEFAULT_BACKEND_URL, auth_file_path, read_auth, write_auth
 CALLBACK_TIMEOUT_SECONDS = 180
 
 
+_SHELL_SAFE_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-"
+)
+
+
 def _stable_binary(binary: str) -> str:
     """Return a shell-safe path to the binary.
 
     The desktop app's binary lives under ~/Library/Application Support/... —
     that path has a SPACE, which the shell splits when the binary is used
     unquoted in a hook command or slash command (`/bin/sh: .../Application:
-    No such file`). When the path has a space, write a no-space wrapper at
-    ~/.teammate-sync/bin/teammate-sync and use that instead."""
-    if " " not in binary:
+    No such file`). And a user's home path could contain other awkward
+    characters too (spaces, parens, `&`, …).
+
+    Whenever the path isn't plainly shell-safe, write a wrapper at the
+    guaranteed-clean, home-relative path ~/.teammate-sync/bin/teammate-sync
+    (home short-names can't contain spaces on macOS/Linux) and use that. The
+    wrapper quotes and execs the real binary, so any content in the original
+    path — one space or several — is handled."""
+    if all(c in _SHELL_SAFE_CHARS for c in binary):
         return binary
     bindir = Path("~/.teammate-sync/bin").expanduser()
     bindir.mkdir(parents=True, exist_ok=True)
