@@ -377,17 +377,24 @@ aliases through as-is; the tool resolves them to handles itself. It returns
 the raw assembled corpus of that teammate's shared sessions (with active-
 session annotations like [ACTIVE — LIVE NOW] and a freshness stamp).
 
-Then YOU read the corpus and answer the user's question using ONLY what
-it contains. Rules:
-  - Cite by session ID for transcript claims (e.g. "session abc-123
-    [ACTIVE — LIVE NOW]") or by filename for note claims.
-  - For "right now" or "currently" questions, prefer [ACTIVE — LIVE NOW]
-    over older sessions.
+Then YOU read the corpus and answer the user's question using ONLY what it
+contains. The reader wants the answer, NOT a status report — keep it tight:
+  - Lead with the answer in 1–3 sentences. No preamble ("Based on the
+    corpus…"), no restating the question.
+  - Do NOT narrate session bookkeeping. Never mention how many sessions
+    there are, which are active vs idle, freshness, timestamps, "last active
+    N minutes ago", cwd, or the [ACTIVE — LIVE NOW] / [MOST RECENT SESSION] /
+    [older session] labels. Those exist for YOU to pick the right source —
+    they are not part of the answer.
+  - End with ONE short citation in parentheses: the session id (first 8
+    chars) or the note filename you drew from, e.g. "(session a1b2c3d4)".
+    One citation, not a list.
+  - For "right now"/"currently" questions, silently prefer the live session;
+    if nothing is live, just answer from their most recent work — don't
+    explain that it isn't live.
   - If the answer isn't in the corpus, say exactly: "Not found in shared context."
-  - Don't speculate beyond what's written. Don't add preamble like
-    "Based on the corpus...".
-  - If the user asked about multiple handles, fetch all in parallel and
-    present the answers grouped by handle.
+  - Don't speculate beyond what's written.
+  - Multiple handles: answer each under a short "@handle:" line, same rules.
 
 If the tool returns a message about content not being visible (no
 /connect-back, no shared sessions), surface it as-is — the user needs to
