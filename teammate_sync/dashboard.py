@@ -490,6 +490,16 @@ _INDEX_HTML = r"""<!doctype html>
                                 </div>
                             </div>
                         </section>
+                        <section class="bg-[#0D0D0F] border border-brand-borderSubtle rounded-lg p-6 flex items-center justify-between gap-4">
+                            <div class="min-w-0">
+                                <h4 class="text-sm font-medium text-white">Software update</h4>
+                                <p class="text-xs text-brand-textMuted mt-0.5">
+                                    <span id="upd-version" class="font-mono">CodeBaton</span>
+                                    <span id="upd-status" class="ml-1"></span>
+                                </p>
+                            </div>
+                            <button id="btn-check-update" class="px-4 py-2 text-xs font-medium text-white bg-brand-surface hover:bg-white/5 border border-brand-borderSubtle rounded transition-colors whitespace-nowrap">Check for updates</button>
+                        </section>
                         <section class="bg-[#0D0D0F] border border-brand-borderSubtle rounded-lg p-6 space-y-6">
                             <div class="flex items-center justify-between">
                                 <div>
@@ -792,12 +802,23 @@ document.addEventListener('click', async e=>{
   }
 });
 
-// ── update banner ──
+// ── update banner + settings card ──
 function renderUpdate(u){
   const b=$('update-banner'), icon=$('update-icon'), text=$('update-text'),
         sub=$('update-sub'), bar=$('update-bar-wrap');
   bar.classList.add('hidden'); sub.classList.add('hidden');
   const s=u&&u.state;
+  // Settings → Software update card (always reflects current version + state)
+  const uv=$('upd-version'), ust=$('upd-status');
+  if(uv) uv.textContent='CodeBaton v'+((u&&u.running)||'?');
+  if(ust){
+    if(s==='downloading'){ ust.textContent='· downloading v'+(u.latest||'')+'…'; ust.className='ml-1 text-brand-lime'; }
+    else if(s==='ready'){ ust.textContent='· v'+(u.latest||'')+' ready — reopen to apply'; ust.className='ml-1 text-brand-lime'; }
+    else if(s==='checking'){ ust.textContent='· checking…'; ust.className='ml-1 text-brand-textMuted'; }
+    else if(s==='error'){ ust.textContent='· last check failed'; ust.className='ml-1 text-red-400'; }
+    else if(s==='offline'){ ust.textContent='· offline'; ust.className='ml-1 text-brand-textMuted'; }
+    else { ust.textContent='· up to date'; ust.className='ml-1 text-brand-textMuted'; }
+  }
   if(s==='checking'){
     b.className='mb-6 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 flex items-center gap-3 text-sm';
     icon.innerHTML='<span class="block w-2 h-2 rounded-full bg-brand-textMuted animate-pulse"></span>';
@@ -821,6 +842,13 @@ function renderUpdate(u){
 async function pollUpdate(){
   try{ renderUpdate(await getJ('/update/status')); }catch(e){}
 }
+$('btn-check-update').addEventListener('click', async function(){
+  const btn=this, orig=btn.textContent;
+  btn.disabled=true; btn.textContent='Checking…';
+  try{ await post('/update/check'); }catch(e){}
+  await pollUpdate();
+  btn.disabled=false; btn.textContent=orig;
+});
 
 // boot
 poll(); refreshLogs(); go('view-overview'); pollUpdate();
@@ -883,11 +911,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._send_json(200, snap)
                 return
             if path == "/update/status":
+                import importlib.metadata as _md
+                try:
+                    running = _md.version("teammate-sync")
+                except Exception:
+                    running = "?"
                 p = Path("~/.teammate-sync/update-status.json").expanduser()
+                data = {"state": "idle"}
                 if p.exists():
-                    self._send(200, p.read_bytes(), "application/json")
-                else:
-                    self._send_json(200, {"state": "idle"})
+                    try:
+                        data = json.loads(p.read_text())
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                data["running"] = running
+                self._send_json(200, data)
                 return
             if path == "/auth/status":
                 self._send_json(200, {
@@ -988,6 +1025,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 type(self).org = new_backend.org
                 type(self).pending.clear()
                 self._send_json(200, {"ok": True, "handle": handle, "org": org})
+                return
+            if path == "/update/check":
+                target = str(Path("~/.teammate-sync/site-packages").expanduser())
+                try:
+                    binary = _resolve_self_binary()
+                    subprocess.run([binary, "self-update", "--target", target],
+                                   capture_output=True, timeout=120)
+                except (OSError, subprocess.SubprocessError, RuntimeError):
+                    pass
+                p = Path("~/.teammate-sync/update-status.json").expanduser()
+                data = {"state": "idle"}
+                if p.exists():
+                    try:
+                        data = json.loads(p.read_text())
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                self._send_json(200, data)
                 return
             if path == "/accept":
                 peer = (body.get("peer") or "").strip()
