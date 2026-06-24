@@ -374,7 +374,7 @@ _INDEX_HTML = r"""<!doctype html>
                                 <span class="font-mono text-[11px] font-medium text-brand-textMuted uppercase tracking-widest">Connections</span>
                             </div>
                             <div class="flex items-baseline gap-2"><span id="stat-conn" class="text-3xl font-semibold text-white">0</span><span class="text-sm font-medium text-[#61C554]">teammates</span></div>
-                            <p class="text-[11px] text-brand-textMuted mt-2 leading-snug">Standing trust. Persists across restarts — separate from what you're sharing right now.</p>
+                            <p class="text-[11px] text-brand-textMuted mt-2 leading-snug">Teammates you're connected to this session. Cleared when you quit CodeBaton.</p>
                         </div>
                         <div class="rounded-lg border border-brand-lime/25 bg-[#0D0D0F] p-5 hover:border-brand-lime/45 transition-all hover:-translate-y-1 shadow-[0_0_36px_-16px_rgba(0,229,122,0.6)]">
                             <div class="flex items-center justify-between mb-4">
@@ -1086,6 +1086,18 @@ def _start_http_server_in_thread(backend, port: int, backend_url: str) -> "socke
     return server
 
 
+def _teardown_on_quit() -> None:
+    """When the GUI is quit, tear everything down so each session starts clean:
+    stop the sync engine, and nuke all connections + shares. Nothing lingers,
+    so the user connects fresh every time — no autostart, no auto-sharing."""
+    try:
+        binary = _resolve_self_binary()
+    except RuntimeError:
+        return
+    subprocess.run([binary, "down"], capture_output=True, timeout=10)
+    subprocess.run([binary, "disconnect"], capture_output=True, timeout=20)
+
+
 def run_dashboard(
     port: int | None = None,
     open_browser: bool = True,
@@ -1125,26 +1137,19 @@ def run_dashboard(
     from . import cli
     cli.refresh_shell_wiring()
 
-    # Auto-start the sync engine on open when signed in, so the app is "on" the
-    # moment you launch it instead of showing a stopped engine. (Sharing is
-    # still per Claude Code session — the engine just being up shares nothing
-    # until you /connect a session.)
-    if backend is not None and not _daemon_status()["alive"]:
-        try:
-            subprocess.run([_resolve_self_binary(), "up"],
-                           capture_output=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            pass
-
     if serve_only:
-        # Machine-readable handshake for the Electron host, then block.
+        # Machine-readable handshake for the Electron host, then block until the
+        # app quits (Electron sends SIGTERM to this process on quit).
         print(json.dumps({"port": port, "url": url}), flush=True)
+        import signal
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
         try:
-            import time
-            while True:
-                time.sleep(3600)
+            while not stop.is_set():
+                stop.wait(3600)
         except KeyboardInterrupt:
             pass
+        _teardown_on_quit()
         server.shutdown()
         return 0
 
@@ -1193,6 +1198,8 @@ def run_dashboard(
         except KeyboardInterrupt:
             pass
 
+    # GUI closed → tear down so the next session starts clean.
+    _teardown_on_quit()
     server.shutdown()
     print("[dashboard] stopped.")
     return 0
