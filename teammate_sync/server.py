@@ -98,6 +98,16 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
         "Skipped. The MCP server",
     )
     _SLASH_PREAMBLE = "Execute this command via the Bash tool"
+    # A user turn that is the /ask prompt expansion Claude Code injects.
+    _ASK_EXPANSION_MARKERS = ("query teammate-sync", "get_teammate_context")
+    # Text that is teammate-sync's own output echoed back (the recursion source
+    # + /connect//alias echoes) — plumbing, not the engineer's conversation.
+    _TS_OUTPUT_MARKERS = (
+        "now shared with", "connection request sent",
+        "Shared for the lifetime of this Claude Code session",
+        "No context visible from", "Not found in shared context",
+        "teammate-sync context — teammate:", "Alias set:",
+    )
 
     def _is_teammate_sync_tool_use(blocks: list) -> bool:
         for b in blocks:
@@ -129,6 +139,7 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
         return ""
 
     skip_mode = False  # True after we see a slash command; eat the boilerplate
+    ask_pending = False  # True after an /ask note; eat its (host-Claude) answer
 
     for raw_line in text.splitlines():
         raw_line = raw_line.strip()
@@ -160,9 +171,14 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
             cmd_name = name_match.group(1).strip() if name_match else "/?"
             cmd_args = args_match.group(1).strip() if args_match else ""
             invocation = f"{cmd_name} {cmd_args}".strip()
-            # Skip the annotation entirely for our own internal slash commands —
-            # they're pure plumbing for the host Claude.
-            if invocation.split()[0] not in ("/connect", "/disconnect", "/shared", "/ask"):
+            first = invocation.split()[0] if invocation else ""
+            if first == "/ask":
+                # Keep a one-line note, drop the instruction expansion + answer.
+                recipient = (cmd_args.split() or ["a teammate"])[0]
+                rendered_blocks.append(f"[Engineer asked teammate {recipient} a question]")
+                ask_pending = True
+            elif first not in ("/connect", "/disconnect", "/shared"):
+                # /connect//disconnect//shared are pure plumbing — no note.
                 rendered_blocks.append(f"[Engineer ran: {invocation}]")
             skip_mode = True
             continue
@@ -178,6 +194,30 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
                     continue
             # First non-slash-related turn: we're back in conversation.
             skip_mode = False
+
+        # ── Filter 3: drop the /ask prompt expansion + teammate-sync echoes ──
+        # (the recursion source: a /ask inside a shared session otherwise bakes
+        # the whole fetched corpus into the transcript and re-shares it).
+        if any(m in content_text for m in _ASK_EXPANSION_MARKERS):
+            continue
+        if content_text and any(m in content_text for m in _TS_OUTPUT_MARKERS):
+            continue
+
+        # Skip the host-Claude answer to an /ask (one assistant text turn after
+        # the note). Intervening plumbing turns carry no text, so they don't
+        # clear the flag; the next real engineer turn does.
+        if ask_pending:
+            if msg_type == "assistant":
+                has_text = (isinstance(block_content, str) and block_content.strip()) or (
+                    isinstance(block_content, list) and any(
+                        isinstance(b, dict) and b.get("type") == "text"
+                        and b.get("text", "").strip()
+                        for b in block_content))
+                if has_text:
+                    ask_pending = False
+                    continue
+            elif msg_type == "user" and content_text.strip():
+                ask_pending = False
 
         # ── Normal rendering: clean speaker label + body ──
         speaker = "Engineer" if msg_type == "user" else "Claude"
@@ -204,6 +244,8 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
                 continue
             elif btype == "tool_use":
                 tname = block.get("name", "?")
+                if tname.startswith("mcp__teammate-sync__"):
+                    continue  # nested teammate-sync query — plumbing, skip
                 tinp = block.get("input", {}) or {}
                 if tname == "Bash":
                     cmd = str(tinp.get("command", "")).strip()[:200]
@@ -231,6 +273,8 @@ def render_jsonl_session(filename: str, content: bytes) -> tuple[str, float]:
                     action_parts.append(f"  ({tname}: {short})")
             elif btype == "tool_result":
                 body = str(block.get("content", "")).strip()
+                if body and any(m in body for m in _TS_OUTPUT_MARKERS):
+                    continue  # teammate-sync corpus/echo result — skip recursion
                 if body:
                     snippet = body[:200].replace("\n", " ")
                     action_parts.append(f"    -> {snippet}")
