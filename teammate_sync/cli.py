@@ -892,15 +892,29 @@ def cmd_self_update(args) -> int:
 
     _write_update_status(state="downloading", current=current, latest=latest)
     print(f"self-update: {current} -> {latest}; installing to {target} …")
+
+    # pip install --target --upgrade does NOT remove the old version — it leaves
+    # both dist-infos, and importlib keeps reporting the OLD version, so the
+    # update never takes effect (endless "reopen to apply"). Install into a
+    # clean staging dir and swap it in, so only the new version remains.
+    import os
+    import shutil
+    staging = target + ".new"
+    shutil.rmtree(staging, ignore_errors=True)
     res = _sp.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade",
-         "--target", target, f"teammate-sync=={latest}"],
+        [sys.executable, "-m", "pip", "install",
+         "--target", staging, f"teammate-sync=={latest}"],
         capture_output=True, text=True,
     )
     if res.returncode != 0:
+        shutil.rmtree(staging, ignore_errors=True)
         _write_update_status(state="error", message="install failed")
         print(f"self-update: pip failed: {res.stderr.strip()[:300]}")
         return 1
+    # Swap freshly-installed staging into place (same parent dir → atomic
+    # rename). On failure above, the existing install is left untouched.
+    shutil.rmtree(target, ignore_errors=True)
+    os.replace(staging, target)
     _write_update_status(state="ready", current=current, latest=latest)
     print(f"self-update: installed {latest}. Restart CodeBaton to apply.")
     return 0
