@@ -866,11 +866,21 @@ def cmd_self_update(args) -> int:
     The app puts --target on PYTHONPATH ahead of the bundled package, so on the
     next launch the daemon, MCP server, hooks, and dashboard all run new code.
     Progress is published to update-status.json for the dashboard banner."""
+    import glob
     import importlib.metadata as _md
+    import os
     import subprocess as _sp
 
     target = args.target
     _write_update_status(state="checking")
+
+    # Self-heal: an older broken installer used `pip install --target --upgrade`,
+    # which leaves BOTH dist-infos behind. importlib then misreports the version,
+    # so updates never "take" and the app nags to reopen forever. If we see more
+    # than one teammate_sync dist-info, force a clean reinstall regardless of the
+    # version comparison below.
+    polluted = len(glob.glob(os.path.join(target, "teammate_sync-*.dist-info"))) > 1
+
     try:
         latest = httpx.get(
             "https://pypi.org/pypi/teammate-sync/json", timeout=10
@@ -885,10 +895,12 @@ def cmd_self_update(args) -> int:
     except _md.PackageNotFoundError:
         current = "0"
 
-    if _ver_tuple(latest) <= _ver_tuple(current):
+    if not polluted and _ver_tuple(latest) <= _ver_tuple(current):
         _write_update_status(state="uptodate", current=current)
         print(f"self-update: up to date ({current})")
         return 0
+    if polluted:
+        print(f"self-update: package dir has stacked installs — clean-reinstalling {latest}")
 
     _write_update_status(state="downloading", current=current, latest=latest)
     print(f"self-update: {current} -> {latest}; installing to {target} …")
@@ -897,7 +909,6 @@ def cmd_self_update(args) -> int:
     # both dist-infos, and importlib keeps reporting the OLD version, so the
     # update never takes effect (endless "reopen to apply"). Install into a
     # clean staging dir and swap it in, so only the new version remains.
-    import os
     import shutil
     staging = target + ".new"
     shutil.rmtree(staging, ignore_errors=True)
