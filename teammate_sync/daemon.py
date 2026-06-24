@@ -112,6 +112,23 @@ def is_share_mode_active(workspace: Path) -> bool:
     return bool(read_shared_session_ids(workspace))
 
 
+def filter_active_sessions(data: bytes, shared_ids: set[str]) -> bytes:
+    """Strip the .active-sessions.json registry down to only /share'd sessions
+    before uploading, so a teammate never sees the existence or cwd of
+    sessions you didn't /connect. Non-JSON content passes through unchanged."""
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return data
+    sessions = obj.get("sessions", [])
+    if isinstance(sessions, list):
+        obj["sessions"] = [
+            s for s in sessions
+            if isinstance(s, dict) and s.get("session_id") in shared_ids
+        ]
+    return json.dumps(obj).encode("utf-8")
+
+
 def initial_sync_all(
     sources: list[Path],
     backend: StorageBackend,
@@ -161,6 +178,8 @@ def initial_sync_all(
 
             all_source_keys.add(rel)
             data = src_file.read_bytes()
+            if rel == ACTIVE_SESSIONS_FILENAME:
+                data = filter_active_sessions(data, set(shared_session_info.keys()))
             backend.put_bytes(rel, data, session_id=sid, recipients=recipients)
             if last_uploaded_size is not None:
                 last_uploaded_size[rel] = len(data)
@@ -341,6 +360,18 @@ class MirrorHandler(FileSystemEventHandler):
         try:
             key = self._rel_key(src_path)
             data = Path(src_path).read_bytes()
+
+            # The live-sessions registry is filtered to /share'd sessions only
+            # (no peeking at unconnected sessions) and always full-uploaded —
+            # a filtered body isn't an append of the previous one.
+            if key == ACTIVE_SESSIONS_FILENAME:
+                data = filter_active_sessions(data, self.state.shared_session_ids)
+                self.state.backend.put_bytes(key, data, session_id=None, recipients=None)
+                self.state.last_uploaded_size[key] = len(data)
+                print(f"[sync] {label} → {key} (shared-only, {len(data)}B)", flush=True)
+                self._schedule_state_write()
+                return
+
             current_size = len(data)
             sid: str | None = None
             recipients: list[str] | None = None

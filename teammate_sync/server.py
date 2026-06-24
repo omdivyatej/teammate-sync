@@ -298,8 +298,11 @@ def format_age(seconds: float) -> str:
     return f"{int(seconds / 86400)} days ago"
 
 
-def format_active_sessions(raw: bytes) -> str:
-    """Render the .active-sessions.json registry as a readable section."""
+def format_active_sessions(raw: bytes, allowed_ids: set | None = None) -> str:
+    """Render the .active-sessions.json registry as a readable section.
+
+    If allowed_ids is given, only sessions whose id is in it are shown — used
+    to scope the live snapshot to sessions actually shared with this reader."""
     try:
         data = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -313,6 +316,8 @@ def format_active_sessions(raw: bytes) -> str:
         if not isinstance(s, dict):
             continue
         sid = s.get("session_id", "?")
+        if allowed_ids is not None and sid not in allowed_ids:
+            continue
         cwd = s.get("cwd") or "?"
         last_epoch = s.get("last_activity_epoch")
         if isinstance(last_epoch, (int, float)):
@@ -323,10 +328,11 @@ def format_active_sessions(raw: bytes) -> str:
     return "\n".join(lines)
 
 
-def _get_active_session_id(backend: StorageBackend) -> str | None:
+def _get_active_session_id(backend: StorageBackend, allowed_ids: set | None = None) -> str | None:
     """
     Read .active-sessions.json and return the session_id of the most recently
-    active session, used to flag the live session in the corpus.
+    active session, used to flag the live session in the corpus. Scoped to
+    allowed_ids (sessions shared with this reader) when given.
     """
     raw = backend.get_bytes(ACTIVE_SESSIONS_FILENAME)
     if not raw:
@@ -344,6 +350,8 @@ def _get_active_session_id(backend: StorageBackend) -> str | None:
     for s in sessions:
         if not isinstance(s, dict):
             continue
+        if allowed_ids is not None and s.get("session_id") not in allowed_ids:
+            continue
         epoch = s.get("last_activity_epoch")
         if isinstance(epoch, (int, float)) and epoch > best_epoch:
             best_epoch = epoch
@@ -360,10 +368,18 @@ def load_corpus(backend: StorageBackend) -> str:
 
     keys = backend.list_keys()
 
+    # Sessions actually shared with this reader (the .jsonl ACL already scopes
+    # these per-recipient). Used to scope the live snapshot below, so it can't
+    # leak the existence/cwd of sessions that weren't /connect-ed.
+    shared_ids = {
+        k[:-len(".jsonl")].split("/")[-1]
+        for k in keys if k.endswith(".jsonl")
+    }
+
     # Active sessions (live state) — first so it's most salient
     active_bytes = backend.get_bytes(ACTIVE_SESSIONS_FILENAME)
     if active_bytes:
-        formatted = format_active_sessions(active_bytes)
+        formatted = format_active_sessions(active_bytes, shared_ids)
         if formatted:
             sections.append(f"=== ACTIVE SESSIONS (live) ===\n{formatted}")
 
@@ -379,7 +395,7 @@ def load_corpus(backend: StorageBackend) -> str:
     # Session jsonl files — sort by most-recent-message timestamp, newest first,
     # and explicitly mark the currently-active session so synthesis can prefer
     # it for "right now" / "most recent" questions.
-    active_session_id = _get_active_session_id(backend)
+    active_session_id = _get_active_session_id(backend, shared_ids)
 
     rendered_sessions: list[tuple[float, str, str]] = []  # (epoch, key, rendered)
     for key in [k for k in keys if k.endswith(".jsonl")]:
