@@ -32,6 +32,8 @@ Env vars (consumed by backend.make_backend_from_env):
 """
 import json
 import signal
+import os
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -239,10 +241,52 @@ class DaemonState:
         # only — on daemon restart we don't know server sizes, so the first
         # event for each file falls back to full upload (which then re-seeds).
         self.last_uploaded_size: dict[str, int] = {}
+        # Per-session debounce timers for silent background distillation.
+        self._distill_timers: dict[str, threading.Timer] = {}
 
     @property
     def is_active(self) -> bool:
         return bool(self.shared_session_info)
+
+    def schedule_distill(self, session_jsonl: Path, session_id: str) -> None:
+        """Debounced, detached, opt-in. ~45s after a shared session's last
+        change, spawn `teammate-sync distill` as a fully detached background
+        process — silent, never blocks the watcher, output to its own log.
+        No-op unless the user has opted in (distill.enabled flag)."""
+        from . import cli
+        if not cli.distill_enabled():
+            return
+        existing = self._distill_timers.get(session_id)
+        if existing:
+            existing.cancel()
+
+        def _fire():
+            try:
+                binary = os.environ.get("TEAMMATE_SYNC_BIN") or sys.executable
+                knowledge = self.workspace / "knowledge.md"
+                if binary == sys.executable:
+                    cmd = [sys.executable, "-m", "teammate_sync.cli", "distill"]
+                else:
+                    cmd = [binary, "distill"]
+                cmd += ["--session", str(session_jsonl),
+                        "--out", str(knowledge),
+                        "--session-id", session_id]
+                # Fully detached: own session, stdout/stderr discarded (the
+                # distiller writes its own log). The daemon never waits.
+                subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception as e:
+                print(f"[sync] distill spawn failed (non-fatal): {e}", flush=True)
+
+        t = threading.Timer(45.0, _fire)
+        t.daemon = True
+        self._distill_timers[session_id] = t
+        t.start()
 
     @property
     def shared_session_ids(self) -> set[str]:
@@ -401,6 +445,8 @@ class MirrorHandler(FileSystemEventHandler):
                             flush=True,
                         )
                         self._schedule_state_write()
+                        if sid:
+                            self.state.schedule_distill(Path(src_path), sid)
                         return
                     # Backend size didn't match ours; fall through to full
                     # upload below. server_size tells us what they have now.
@@ -416,6 +462,8 @@ class MirrorHandler(FileSystemEventHandler):
             self.state.last_uploaded_size[key] = current_size
             print(f"[sync] {label} → {key} (full {current_size}B){recip_label}", flush=True)
             self._schedule_state_write()
+            if sid:
+                self.state.schedule_distill(Path(src_path), sid)
         except Exception as e:
             print(f"[sync] error on {label} {src_path}: {e}", flush=True)
 

@@ -981,6 +981,31 @@ def cmd_hook(args) -> int:
     return _hook.main()
 
 
+def distill_enabled() -> bool:
+    """Distillation is opt-in until validated on real machines — flip on by
+    creating ~/.teammate-sync/distill.enabled. Keeps the shipped daemon safe."""
+    return Path("~/.teammate-sync/distill.enabled").expanduser().exists()
+
+
+def cmd_distill(args) -> int:
+    """Fold one session into knowledge.md via the engineer's own Claude.
+    Invoked detached by the daemon (silent, background). Hidden command."""
+    from . import distiller
+    from datetime import datetime, timezone
+    session = Path(args.session).expanduser()
+    out = Path(args.out).expanduser()
+    if not session.exists():
+        return 1
+    sid = args.session_id or session.stem
+    try:
+        claude = _resolve_claude_binary()
+    except RuntimeError:
+        return 1
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ok = distiller.distill_session(session, out, sid, date, claude)
+    return 0 if ok else 1
+
+
 def cmd_mcp_server(args) -> int:
     """Launch the MCP server on stdio (invoked by Claude Code, not by users)."""
     try:
@@ -1125,6 +1150,14 @@ def main() -> int:
 
     # Internal: invoked by Claude Code over stdio as the MCP server.
     sub.add_parser("mcp-server", help=argparse.SUPPRESS).set_defaults(func=cmd_mcp_server)
+
+    # Internal: the daemon spawns this detached to fold a session into
+    # knowledge.md (silent background distillation).
+    p_distill = sub.add_parser("distill", help=argparse.SUPPRESS)
+    p_distill.add_argument("--session", required=True, help="Path to the session .jsonl")
+    p_distill.add_argument("--out", required=True, help="Path to knowledge.md to update")
+    p_distill.add_argument("--session-id", default=None)
+    p_distill.set_defaults(func=cmd_distill)
 
     # Internal: the desktop app runs this to pull the latest package from PyPI
     # into a user dir (kept on PYTHONPATH), so it updates without a re-download.

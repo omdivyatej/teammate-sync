@@ -1,6 +1,6 @@
 {
   "name": "teammate-sync-desktop",
-  "version": "0.6.16",
+  "version": "0.6.27",
   "description": "teammate-sync desktop app — cross-platform Electron shell with a bundled Python runtime.",
   "author": "Om Divyatej <om@turgon.ai>",
   "license": "MIT",

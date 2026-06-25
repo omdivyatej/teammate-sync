@@ -101,10 +101,15 @@ else
 fi
 
 # ── Trim to shrink bundle size ──────────────────────────────────────────────
-echo "==> Trimming runtime (tests, caches, pyc)…"
+echo "==> Trimming runtime (tests, caches, pyc, debug symbols)…"
 find "$OUT_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT_DIR" -type d -name "test" -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT_DIR" -type d -name "tests" -prune -exec rm -rf {} + 2>/dev/null || true
+# PyObjC ships test packages with .dSYM debug bundles; codesign chokes on the
+# inner DWARF Mach-O (errSecInternalComponent) and they're useless in a shipped
+# app. Strip the test packages and any .dSYM debug symbols before signing.
+find "$OUT_DIR" -type d -name "PyObjCTest" -prune -exec rm -rf {} + 2>/dev/null || true
+find "$OUT_DIR" -type d -name "*.dSYM" -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> Verifying teammate_sync imports inside the bundle…"
 "$PYBIN" -c "import teammate_sync; import teammate_sync.cli; print('  ok — teammate_sync importable in bundled runtime')"
