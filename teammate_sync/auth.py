@@ -99,12 +99,16 @@ def write_auth(
     org: str,
     backend_url: str = DEFAULT_BACKEND_URL,
     anthropic_key: str | None = None,
+    github_handle: str | None = None,
 ) -> Path:
     """Persist the auth file with restrictive permissions (0600).
 
     Preserves any existing fields not overwritten by this call — re-running
     init with a different field set won't blow away the others (e.g.,
-    refreshing the GitHub token shouldn't wipe the stored Anthropic key)."""
+    refreshing the GitHub token shouldn't wipe the stored Anthropic key).
+
+    github_handle is cached so the app can construct its backend offline,
+    without a mandatory /v1/me network call on every launch."""
     path = auth_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +122,8 @@ def write_auth(
     payload = {**existing, "token": token, "org": org, "backend_url": backend_url}
     if anthropic_key is not None:
         payload["anthropic_key"] = anthropic_key
+    if github_handle is not None:
+        payload["github_handle"] = github_handle
 
     path.write_text(json.dumps(payload, indent=2))
     path.chmod(0o600)

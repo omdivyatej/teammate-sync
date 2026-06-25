@@ -51,26 +51,44 @@ LAUNCHAGENT_PATH = Path("~/Library/LaunchAgents/com.teammate-sync.app.plist").ex
 
 
 def _backend():
-    """Construct an authenticated HTTPBackend for the caller. Raises if no auth."""
-    from .auth import read_auth
+    """Construct an authenticated HTTPBackend for the caller. Raises
+    FileNotFoundError/ValueError if not signed in.
+
+    Uses the github_handle cached in auth.json so the app opens OFFLINE — no
+    mandatory network call on launch. Only if the handle isn't cached (older
+    sign-ins) do we fetch it from /v1/me; a network failure there raises
+    ValueError so the caller degrades gracefully instead of crashing."""
+    from .auth import read_auth, write_auth
     from .backend import HTTPBackend
-    import httpx
-    auth = read_auth()
-    r = httpx.get(
-        f"{auth['backend_url'].rstrip('/')}/v1/me",
-        headers={"Authorization": f"Bearer {auth['token']}"},
-        timeout=10.0,
-    )
-    if r.status_code != 200:
-        raise ValueError(
-            f"Cloud backend rejected token (/v1/me → {r.status_code}). "
-            f"Re-run `teammate-sync init` to refresh."
-        )
+    auth = read_auth()  # FileNotFoundError / ValueError if not signed in
+    handle = auth.get("github_handle")
+    if not handle:
+        import httpx
+        try:
+            r = httpx.get(
+                f"{auth['backend_url'].rstrip('/')}/v1/me",
+                headers={"Authorization": f"Bearer {auth['token']}"},
+                timeout=10.0,
+            )
+        except httpx.HTTPError as e:
+            raise ValueError(f"Cannot reach backend to verify identity: {e}")
+        if r.status_code != 200:
+            raise ValueError(
+                f"Cloud backend rejected token (/v1/me → {r.status_code}). "
+                f"Re-run sign-in to refresh."
+            )
+        handle = r.json()["github_handle"]
+        # Cache it so future launches don't need the network.
+        try:
+            write_auth(token=auth["token"], org=auth["org"],
+                       backend_url=auth["backend_url"], github_handle=handle)
+        except OSError:
+            pass
     return HTTPBackend(
         backend_url=auth["backend_url"],
         token=auth["token"],
         org=auth["org"],
-        teammate=r.json()["github_handle"],
+        teammate=handle,
     )
 
 
@@ -1245,10 +1263,14 @@ def run_dashboard(
     # that captures the token, lets you pick your org, wires Claude Code, and
     # brings the dashboard live without a terminal.
     from .auth import DEFAULT_BACKEND_URL
+    # NEVER let backend construction crash startup — the window must always
+    # open (signed-out shows the in-app sign-in; a transient network issue
+    # just degrades to that until reload). A crash here = "dashboard exited
+    # early (code 1)" with no window at all.
     try:
         backend = _backend()
         backend_url = backend.backend_url
-    except (FileNotFoundError, ValueError):
+    except Exception:
         backend = None
         backend_url = DEFAULT_BACKEND_URL
 
@@ -1258,9 +1280,13 @@ def run_dashboard(
     server = _start_http_server_in_thread(backend, port, backend_url)
 
     # On desktop-app launch, re-apply the Claude Code wiring with current code
-    # so fixes (e.g. shell-quoting the binary path) self-heal via self-update.
-    from . import cli
-    cli.refresh_shell_wiring()
+    # so fixes self-heal via self-update. Guarded — must never crash startup
+    # (e.g. if `claude` isn't found, MCP registration raises).
+    try:
+        from . import cli
+        cli.refresh_shell_wiring()
+    except Exception as e:
+        print(f"[dashboard] wiring refresh skipped (non-fatal): {e}", file=sys.stderr)
 
     if serve_only:
         # Machine-readable handshake for the Electron host, then block until the

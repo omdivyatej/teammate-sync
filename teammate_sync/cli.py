@@ -276,7 +276,8 @@ def cmd_init(args) -> int:
     # v0.4: no Anthropic key required anymore. The MCP server no longer
     # synthesizes — it just hands raw context to the host Claude. We
     # preserve any existing key in auth.json from older versions (harmless).
-    path = write_auth(token=token, org=org, backend_url=backend_url)
+    path = write_auth(token=token, org=org, backend_url=backend_url,
+                      github_handle=me.get("github_handle"))
     print(f"\n✓ Saved {path} (mode 0600)")
     print(f"  GitHub:    {me['github_handle']}")
     print(f"  Workspace: {org}")
@@ -532,7 +533,7 @@ def finish_signin(token: str, org: str, backend_url: str) -> str:
     )
     r.raise_for_status()
     handle = r.json()["github_handle"]
-    write_auth(token=token, org=org, backend_url=backend_url)
+    write_auth(token=token, org=org, backend_url=backend_url, github_handle=handle)
     try:
         binary = _resolve_self_binary()
     except RuntimeError:
