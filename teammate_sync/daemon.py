@@ -594,7 +594,7 @@ def main() -> int:
             flush=True,
         )
     else:
-        print("[sync] share-mode INACTIVE — daemon idle until /share is run", flush=True)
+        print("[sync] idle — nothing shared yet. Run /connect <teammate> in a Claude Code session to start sharing.", flush=True)
 
     observer = Observer()
     for i, src in enumerate(sources):
