@@ -70,7 +70,7 @@ INVARIANTS:
 === CURRENT knowledge.md ===
 {current_knowledge}
 
-=== RECENT SESSION (id {session_id}, {date}) ===
+=== RECENT SESSION (id {session_id}, {datetime}) ===
 {session_text}
 """
 
