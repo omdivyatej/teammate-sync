@@ -256,17 +256,6 @@ function buildTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: 'Install CLI integration…',
-      click: installCliIntegration,
-    },
-    {
-      label: 'Sign in / init…',
-      click: () => {
-        // init is interactive (browser OAuth + org pick). Run in a terminal.
-        openInitInTerminal();
-      },
-    },
-    {
       label: 'Check for Updates…',
       click: checkForUpdates,
     },
@@ -316,50 +305,6 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
-// ─── CLI integration + init ────────────────────────────────────────────────
-
-// Installs a `teammate-sync` shim onto the user's PATH (~/.local/bin), so
-// Claude Code's slash commands, hooks, and MCP server can find it even though
-// the real runtime is bundled inside this .app.
-function installCliIntegration() {
-  try {
-    const binDir = path.join(os.homedir(), '.local', 'bin');
-    fs.mkdirSync(binDir, { recursive: true });
-    const target = path.join(binDir, 'teammate-sync');
-    if (process.platform === 'win32') {
-      // On Windows we'd add a .cmd to a dir on PATH; left as a follow-up.
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        message: 'Windows CLI integration is coming soon. For now use: pipx install teammate-sync',
-      });
-      return;
-    }
-    fs.writeFileSync(target, `#!/bin/sh\nexec "${pythonPath}" -m teammate_sync.cli "$@"\n`);
-    fs.chmodSync(target, 0o755);
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      message: 'CLI integration installed.',
-      detail: `Wrote ${target}\n\nMake sure ~/.local/bin is on your PATH, then run "Sign in / init" to wire up Claude Code (hooks, MCP, slash commands).`,
-    });
-  } catch (e) {
-    dialog.showErrorBox('teammate-sync', `Could not install CLI integration: ${e.message}`);
-  }
-}
-
-function openInitInTerminal() {
-  if (process.platform === 'darwin') {
-    const cmd = `"${pythonPath}" -m teammate_sync.cli init`;
-    const script = `tell application "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"\ntell application "Terminal" to activate`;
-    spawn('osascript', ['-e', script]);
-  } else {
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      message: 'Run sign-in from a terminal:',
-      detail: `${pythonPath} -m teammate_sync.cli init`,
-    });
-  }
-}
-
 // ─── App lifecycle ─────────────────────────────────────────────────────────
 
 app.on('ready', async () => {
@@ -372,23 +317,24 @@ app.on('ready', async () => {
   createTray();
 
   try {
+    // The dashboard server starts even when signed out — it shows the in-app
+    // GitHub sign-in screen in the window itself (no terminal). So a failure
+    // here is a genuine startup error, not a "needs setup" case.
     dashboardUrl = await startDashboardServer();
     createWindow();
     refreshTray();
   } catch (e) {
-    // Most common cause: user hasn't signed in yet (no auth.json).
     const choice = dialog.showMessageBoxSync({
-      type: 'warning',
-      buttons: ['Sign in now', 'Quit'],
+      type: 'error',
+      buttons: ['Retry', 'Quit'],
       defaultId: 0,
-      message: 'teammate-sync needs to be set up.',
-      detail: `${e.message}\n\nClick "Sign in now" to authenticate with GitHub and configure your workspace.`,
+      message: 'CodeBaton could not start its dashboard.',
+      detail: `${e.message}\n\nThis is usually transient. Click Retry to try again.`,
     });
     if (choice === 0) {
-      installCliIntegration();
-      openInitInTerminal();
+      app.relaunch();
+      app.exit(0);
     }
-    // Keep the tray alive so the user can retry after init.
   }
 
   // Periodically refresh tray daemon status.
