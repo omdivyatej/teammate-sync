@@ -139,13 +139,15 @@ def distill_session(
         prompt = build_prompt(session_text, current, session_id, when)
 
         # The engineer's own Claude, headless, in a neutral cwd. -p = one-shot
-        # print mode (no interactive UI). Prompt on stdin so it can't blow the
-        # arg-length limit.
+        # print mode (no interactive UI). Pass the prompt as the POSITIONAL
+        # argument — `claude -p <prompt>` — which is the reliable headless form.
+        # (Piping it on stdin with a bare `-p` can leave claude with no prompt.)
+        # Our prompt is well under the OS arg limit. No --permission-mode: this
+        # is a pure text transformation, it uses no tools.
         env = dict(os.environ)
         env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
         res = subprocess.run(
-            [claude_binary, "-p", "--permission-mode", "bypassPermissions"],
-            input=prompt,
+            [claude_binary, "-p", prompt],
             capture_output=True,
             text=True,
             cwd=str(_work_dir()),
@@ -153,7 +155,10 @@ def distill_session(
             timeout=180,
         )
         if res.returncode != 0:
-            _log(f"[distill] claude failed rc={res.returncode}: {res.stderr.strip()[:300]}")
+            # Capture BOTH streams — claude often reports usage/auth errors on
+            # stdout, not stderr.
+            detail = (res.stderr.strip() or res.stdout.strip())[:500]
+            _log(f"[distill] claude failed rc={res.returncode}: {detail}")
             return False
         updated = res.stdout.strip()
         if not updated or "## Current decisions" not in updated:
