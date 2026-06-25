@@ -162,6 +162,21 @@ class SessionUnshareRequest(BaseModel):
     recipient: str | None = None
 
 
+class KnowledgeUploadRequest(BaseModel):
+    org: str
+    content: str
+
+
+class KnowledgeDoc(BaseModel):
+    engineer_handle: str
+    content: str
+    updated_at: float
+
+
+class KnowledgeResponse(BaseModel):
+    docs: list[KnowledgeDoc]
+
+
 # ─── Auth helpers ──────────────────────────────────────────────────────────
 
 GITHUB_USER_CACHE: dict[str, dict] = {}
@@ -387,6 +402,31 @@ async def upload_file(
         "size": len(content),
         "shares_registered": n_shares,
     }
+
+
+@app.post("/v1/knowledge")
+async def upload_knowledge(
+    req: KnowledgeUploadRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """Upsert the caller's durable knowledge doc (distilled decisions). Persists
+    org-wide and survives the caller going offline — powers /ask-all."""
+    await require_workspace_member(user, req.org)
+    await storage.upsert_knowledge(req.org, user["login"], req.content)
+    return {"ok": True, "engineer": user["login"], "size": len(req.content)}
+
+
+@app.get("/v1/knowledge", response_model=KnowledgeResponse)
+async def get_knowledge(
+    org: str,
+    user: dict = Depends(github_user_from_bearer),
+) -> KnowledgeResponse:
+    """All engineers' knowledge docs in the caller's org (offline-readable).
+    Privacy is org-isolation only for now — any org member can read the org's
+    knowledge. Finer-grained access is a later refinement."""
+    await require_workspace_member(user, org)
+    docs = await storage.get_org_knowledge(org)
+    return KnowledgeResponse(docs=[KnowledgeDoc(**d) for d in docs])
 
 
 @app.post("/v1/files/append")

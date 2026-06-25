@@ -52,13 +52,17 @@ FORMAT — keep the existing structure; if empty, start with:
 **Decision:** ...
 **Why:** ...
 **Touches:** <files / systems>
-_(session {session_id}, {date})_
+_(session {session_id}, {datetime})_
 
 ## Superseded
-(struck-through past decisions, each with the date it changed)
+(struck-through past decisions, each with the date+time it changed)
 
 INVARIANTS:
-- Cite every entry with its source session id + date. Never invent a citation.
+- ALWAYS stamp every entry with the date AND time in simple format
+  (YYYY-MM-DD HH:MM) using the timestamp given below. This is how a reader
+  (and you, on the next update) tells which decision is the latest and how
+  decisions evolved over time. Newer timestamp = more current.
+- Cite every entry with its source session id + datetime. Never invent one.
 - No secrets: write [redacted] for any API key, token, or .env value.
 - Stay tight — a teammate skims this. No duplicates. Preserve everything you
   are not actively changing.
@@ -86,20 +90,37 @@ def _log(msg: str) -> None:
         f.write(msg.rstrip() + "\n")
 
 
-def build_prompt(session_text: str, current_knowledge: str, session_id: str, date: str) -> str:
+def build_prompt(session_text: str, current_knowledge: str, session_id: str, when: str) -> str:
     return _DISTILL_PROMPT.format(
         current_knowledge=current_knowledge or "(empty — this is the first entry)",
         session_text=session_text,
         session_id=session_id,
-        date=date,
+        datetime=when,
     )
+
+
+def _push_to_backend(content: str) -> None:
+    """Upload the engineer's knowledge doc to the durable, org-wide store so
+    /ask-all can read it even when this machine is offline. Best-effort."""
+    try:
+        import httpx
+        from .auth import read_auth
+        auth = read_auth()
+        httpx.post(
+            f"{auth['backend_url'].rstrip('/')}/v1/knowledge",
+            json={"org": auth["org"], "content": content},
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=20,
+        )
+    except Exception as e:
+        _log(f"[distill] backend push failed (local knowledge.md still updated): {e}")
 
 
 def distill_session(
     session_jsonl: Path,
     knowledge_path: Path,
     session_id: str,
-    date: str,
+    when: str,
     claude_binary: str,
     max_chars: int = 60000,
 ) -> bool:
@@ -115,7 +136,7 @@ def distill_session(
         session_text = session_text[-max_chars:]  # cap to recent context
 
         current = knowledge_path.read_text() if knowledge_path.exists() else ""
-        prompt = build_prompt(session_text, current, session_id, date)
+        prompt = build_prompt(session_text, current, session_id, when)
 
         # The engineer's own Claude, headless, in a neutral cwd. -p = one-shot
         # print mode (no interactive UI). Prompt on stdin so it can't blow the
@@ -142,6 +163,7 @@ def distill_session(
         knowledge_path.parent.mkdir(parents=True, exist_ok=True)
         knowledge_path.write_text(updated + "\n")
         _log(f"[distill] updated {knowledge_path.name} from session {session_id} ({len(updated)}B)")
+        _push_to_backend(updated)  # durable org-wide store for /ask-all
         return True
     except Exception as e:  # fail-safe: distillation must never break the daemon
         _log(f"[distill] error: {e}")

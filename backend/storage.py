@@ -81,6 +81,22 @@ CREATE INDEX IF NOT EXISTS idx_session_shares_owner
 
 CREATE INDEX IF NOT EXISTS idx_session_shares_recipient
     ON session_shares (workspace_org, recipient_handle, owner_handle);
+
+-- Durable per-engineer distilled decision log (knowledge.md). Unlike files/
+-- session_shares (ephemeral, torn down on quit), this PERSISTS: it survives
+-- the engineer going offline or quitting, and is readable org-wide. One row
+-- per engineer per org; the distiller updates (never overwrites away) the
+-- engineer's own evolving doc. Powers /ask-all (team memory).
+CREATE TABLE IF NOT EXISTS knowledge (
+    workspace_org  TEXT NOT NULL,
+    engineer_handle TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    updated_at     REAL NOT NULL,
+    PRIMARY KEY (workspace_org, engineer_handle)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_org
+    ON knowledge (workspace_org);
 """
 
 
@@ -91,6 +107,45 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(_SCHEMA)
         await db.commit()
+
+
+# ─── Knowledge (durable, org-wide, offline-readable) ───────────────────────
+
+async def upsert_knowledge(workspace_org: str, engineer_handle: str, content: str) -> None:
+    """Replace this engineer's knowledge doc with the latest distilled version.
+    One row per engineer; the distiller evolves the doc client-side (append +
+    supersede), so this just stores the newest full content."""
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO knowledge (workspace_org, engineer_handle, content, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_org, engineer_handle)
+            DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at
+            """,
+            (workspace_org, engineer_handle, content, now),
+        )
+        await db.commit()
+
+
+async def get_org_knowledge(workspace_org: str) -> list[dict]:
+    """All engineers' knowledge docs in an org, newest-updated first. Powers
+    /ask-all — readable org-wide, works whether or not the owner is online."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """
+            SELECT engineer_handle, content, updated_at
+            FROM knowledge WHERE workspace_org=?
+            ORDER BY updated_at DESC
+            """,
+            (workspace_org,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [
+        {"engineer_handle": r[0], "content": r[1], "updated_at": r[2]}
+        for r in rows
+    ]
 
 
 # ─── Files ─────────────────────────────────────────────────────────────────

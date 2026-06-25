@@ -415,14 +415,43 @@ The user's argument is: $ARGUMENTS
 """
 
 
+_ASK_ALL_SLASH_MD = """\
+---
+description: Ask the whole team a question — searches everyone's accumulated decision knowledge (works even when teammates are offline).
+argument-hint: "<question>"
+---
+
+The user is asking the WHOLE TEAM, not one person. Call the MCP tool
+`mcp__teammate-sync__query_team_knowledge` (no arguments). It returns every
+engineer's distilled decision log (knowledge.md) from the org's durable store
+— so it works even when teammates are offline.
+
+Then YOU read it and answer the user's question using ONLY that content. Keep
+it tight:
+  - Lead with the answer in 1–3 sentences. No preamble.
+  - Cite the engineer and, when present, the date/time of the decision —
+    e.g. "(@nikhil, 2026-06-25 14:30)". Prefer the NEWEST entry when decisions
+    evolved over time, and mention if it superseded an earlier one.
+  - If the answer isn't there, say exactly: "Not found in shared context."
+  - Don't speculate beyond what's written.
+
+For what a specific person is doing RIGHT NOW, that's `/ask <teammate>` (the
+live view) instead — this command is for accumulated team decisions.
+
+The user's question is: $ARGUMENTS
+"""
+
+
 def _slash_command_md(action: str, binary: str) -> str:
     """
     Generate a slash-command markdown file. Most slash commands shell out to
-    the installed `teammate-sync` binary; /ask is special and tells Claude
-    to call the MCP tool directly.
+    the installed `teammate-sync` binary; /ask + /ask-all are special and tell
+    Claude to call an MCP tool directly.
     """
     if action == "ask":
         return _ASK_SLASH_MD
+    if action == "ask-all":
+        return _ASK_ALL_SLASH_MD
 
     spec = SLASH_COMMAND_SPECS[action]
     hint_yaml = f'argument-hint: "{spec["args_hint"]}"\n' if spec["args_hint"] else ""
@@ -448,7 +477,7 @@ After showing the output, do NOT add commentary.
 
 # Order matters for the install summary print: list in the order they'd
 # logically be used.
-_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "alias", "ask"]
+_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "alias", "ask", "ask-all"]
 
 
 def _wire_claude_integration(binary: str) -> None:
@@ -1001,8 +1030,8 @@ def cmd_distill(args) -> int:
         claude = _resolve_claude_binary()
     except RuntimeError:
         return 1
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    ok = distiller.distill_session(session, out, sid, date, claude)
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    ok = distiller.distill_session(session, out, sid, when, claude)
     return 0 if ok else 1
 
 

@@ -470,6 +470,41 @@ def load_corpus(backend: StorageBackend) -> str:
     return corpus
 
 
+def load_live_transcript(backend: StorageBackend) -> str:
+    """Just the LIVE session — what the teammate is working on right now.
+
+    Powers `/ask`: returns ONLY the active (or, if none flagged live, the
+    most-recent) session's rendered transcript. No CLAUDE.md, no older
+    sessions, no notes, no metadata block — the present-tense view. For
+    accumulated decisions across the team, /ask-all reads knowledge.md."""
+    keys = backend.list_keys()
+    jsonl_keys = [k for k in keys if k.endswith(".jsonl")]
+    if not jsonl_keys:
+        return "[Error: no live session visible]"
+
+    shared_ids = {k[:-len(".jsonl")].split("/")[-1] for k in jsonl_keys}
+    active_id = _get_active_session_id(backend, shared_ids)
+
+    best_key, best_epoch, best_rendered = None, -1.0, ""
+    for key in jsonl_keys:
+        content = backend.get_bytes(key)
+        if content is None:
+            continue
+        rendered, epoch = render_jsonl_session(key, content)
+        if not rendered:
+            continue
+        uuid = key[:-len(".jsonl")].split("/")[-1]
+        # Strongly prefer the flagged-live session; otherwise newest by time.
+        score = epoch + (1e12 if active_id and uuid == active_id else 0)
+        if score > best_epoch:
+            best_key, best_epoch, best_rendered = key, score, rendered
+
+    if not best_rendered:
+        return "[Error: no live session visible]"
+    sid = best_key[:-len(".jsonl")].split("/")[-1]
+    return f"=== LIVE session {sid} ===\n{best_rendered}"
+
+
 def get_sync_freshness(backend: StorageBackend) -> dict | None:
     state = backend.get_state()
     if state is None:
@@ -558,38 +593,85 @@ def get_teammate_context(teammate: str) -> str:
     except (FileNotFoundError, ValueError) as e:
         return f"[Error: {e}]"
 
-    corpus = load_corpus(backend)
+    corpus = load_live_transcript(backend)
     if corpus.startswith("[Error"):
         return (
-            f"No context visible from {teammate}.\n\n"
-            f"Either they haven't /connect-ed you to any of their sessions, "
-            f"or you haven't /connect-ed back yet. Their content only flows "
-            f"after both sides /connect each other. Run /connect (no args) "
-            f"to see workspace status; or /connect {teammate} to share back.\n\n"
+            f"No live session visible from {teammate}.\n\n"
+            f"They need an ACTIVE Claude Code session /connect-ed with you (and "
+            f"the sync engine running) for a live view. For accumulated "
+            f"decisions across the team — which work even when people are "
+            f"offline — use /ask-all instead.\n\n"
             f"Raw backend error: {corpus}"
         )
 
     freshness = get_sync_freshness(backend)
     if freshness is None:
-        freshness_line = f"# Freshness: unknown\n"
+        freshness_line = "# Freshness: unknown\n"
     else:
         age_str = format_age(freshness["age_seconds"])
         warn = " ⚠️ STALE (>30 min)" if freshness["is_stale"] else ""
         freshness_line = f"# Freshness: synced {age_str}{warn}\n"
 
     header = (
-        f"# teammate-sync context — teammate: {teammate}\n"
+        f"# teammate-sync LIVE view — teammate: {teammate}\n"
         f"{freshness_line}"
         f"#\n"
-        f"# Read the corpus below and answer the user's question using ONLY\n"
-        f"# this content. Cite by session ID for transcript claims, by\n"
-        f"# filename for note claims. Sessions labeled [ACTIVE — LIVE NOW]\n"
-        f"# are what {teammate} is typing in this moment — prefer them for\n"
-        f"# 'right now' / 'currently' questions. Say exactly\n"
-        f"# 'Not found in shared context.' if the answer isn't here.\n"
+        f"# This is what {teammate} is working on RIGHT NOW (their live\n"
+        f"# session). Answer the user's question using ONLY this, cite the\n"
+        f"# session id. Say exactly 'Not found in shared context.' if absent.\n"
+        f"# For past decisions / team knowledge, the user should use /ask-all.\n"
         f"\n"
     )
     return header + corpus
+
+
+@mcp.tool()
+def query_team_knowledge() -> str:
+    """Fetch the team's accumulated decision knowledge across the whole org.
+
+    Powers `/ask-all`. Returns every engineer's distilled knowledge.md (their
+    decisions + the why, with dates/times), read from the durable server-side
+    store — so it works even when those teammates are OFFLINE. Use this for
+    "why did we decide X", "has anyone dealt with Y", "what's the state of Z"
+    questions. For what someone is doing right now, use get_teammate_context
+    (the live view) instead.
+
+    Returns:
+        Concatenated per-engineer knowledge docs, newest-updated first, each
+        under a `=== @handle (updated <ts>) ===` header. The calling Claude
+        reads these and answers, citing the engineer + decision.
+    """
+    try:
+        auth = read_auth()
+    except (FileNotFoundError, ValueError) as e:
+        return f"[Error: {e}]"
+    import httpx
+    try:
+        r = httpx.get(
+            f"{auth['backend_url'].rstrip('/')}/v1/knowledge",
+            params={"org": auth["org"]},
+            headers={"Authorization": f"Bearer {auth['token']}"},
+            timeout=20,
+        )
+    except httpx.HTTPError as e:
+        return f"[Error reaching backend: {e}]"
+    if r.status_code != 200:
+        return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
+    docs = r.json().get("docs", [])
+    if not docs:
+        return ("No team knowledge yet. Decisions appear here as teammates work "
+                "with decision-capture enabled. Say exactly 'Not found in shared "
+                "context.' to the user.")
+    sections = [
+        "# teammate-sync TEAM KNOWLEDGE (org-wide, offline-readable)\n"
+        "# Each block is one engineer's distilled decisions. Answer the user's\n"
+        "# question from these, cite the engineer + decision. Prefer entries\n"
+        "# with the newest date/time. Say 'Not found in shared context.' if absent.\n"
+    ]
+    for d in docs:
+        when = datetime.fromtimestamp(d["updated_at"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+        sections.append(f"=== @{d['engineer_handle']} (updated {when} UTC) ===\n{d['content']}")
+    return "\n\n".join(sections)
 
 
 if __name__ == "__main__":
