@@ -23,6 +23,32 @@ def auth_file_path() -> Path:
     return Path(os.environ.get("TEAMMATE_AUTH_FILE", DEFAULT_AUTH_FILE)).expanduser()
 
 
+def claude_token_path() -> Path:
+    """Where the headless Claude OAuth token (from `claude setup-token`) lives.
+    Kept next to auth.json — OUTSIDE ~/.teammate-sync/state/ (the synced tree) —
+    so this credential is NEVER uploaded. Read by the distiller to run
+    `claude -p` in the background daemon, which can't reach the interactive
+    Keychain login."""
+    return auth_file_path().parent / "claude-token"
+
+
+def read_claude_token() -> str | None:
+    p = claude_token_path()
+    if not p.exists():
+        return None
+    tok = p.read_text().strip()
+    return tok or None
+
+
+def write_claude_token(token: str) -> Path:
+    """Store the headless token with 0600 perms. Never logged."""
+    p = claude_token_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(token.strip())
+    p.chmod(0o600)
+    return p
+
+
 def read_auth() -> dict:
     """Read the auth file. Raises with a clear message if missing or malformed."""
     path = auth_file_path()

@@ -146,6 +146,13 @@ def distill_session(
         # is a pure text transformation, it uses no tools.
         env = dict(os.environ)
         env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        # The daemon runs detached and can't reach the interactive Keychain
+        # login ("Not logged in"). Use the headless OAuth token from
+        # `claude setup-token` instead, which works from any context.
+        from .auth import read_claude_token
+        token = read_claude_token()
+        if token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
         res = subprocess.run(
             [claude_binary, "-p", prompt],
             capture_output=True,

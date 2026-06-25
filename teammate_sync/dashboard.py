@@ -515,9 +515,13 @@ _INDEX_HTML = r"""<!doctype html>
                             </div>
                             <div class="w-full h-px bg-brand-borderSubtle"></div>
                             <div class="flex items-center justify-between">
-                                <div>
+                                <div class="flex-1 min-w-0 pr-4">
                                     <h4 class="text-sm font-medium text-white">Capture decisions</h4>
                                     <p class="text-xs text-brand-textMuted mt-0.5">Silently distill your sessions into a shared decision log (knowledge.md) for /ask-all.</p>
+                                    <div id="claude-auth-row" class="hidden mt-2 flex items-center gap-2">
+                                        <span id="claude-auth-status" class="text-xs"></span>
+                                        <button id="btn-claude-auth" class="hidden text-xs font-medium text-black bg-brand-lime px-2.5 py-1 rounded hover:opacity-90 transition">Authorize Claude</button>
+                                    </div>
                                 </div>
                                 <label class="relative flex items-center cursor-pointer">
                                     <input id="set-distill" type="checkbox" class="sr-only peer toggle-checkbox" data-setting="distill">
@@ -752,11 +756,36 @@ async function refreshLogs(){
 }
 
 // ── settings ──
-async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; $('set-distill').checked=!!s.distill_enabled; }catch(e){} }
+async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; $('set-distill').checked=!!s.distill_enabled; renderClaudeAuth(s.distill_enabled, s.claude_authorized); }catch(e){} }
+function renderClaudeAuth(distillOn, authed){
+  const row=$('claude-auth-row'), status=$('claude-auth-status'), btn=$('btn-claude-auth');
+  if(!distillOn){ row.classList.add('hidden'); return; }
+  row.classList.remove('hidden'); row.classList.add('flex');
+  if(authed){
+    status.textContent='✓ Claude authorized for background capture';
+    status.className='text-xs text-brand-lime';
+    btn.classList.add('hidden');
+  } else {
+    status.textContent='Claude not authorized — capture is idle.';
+    status.className='text-xs text-brand-textMuted';
+    btn.classList.remove('hidden');
+  }
+}
+let _claudeAuthPoll=null;
+$('btn-claude-auth').addEventListener('click', async function(){
+  this.textContent='Opening browser…'; this.disabled=true;
+  try{ await post('/settings/claude-auth',{}); }catch(e){}
+  $('claude-auth-status').textContent='Waiting for browser authorization…';
+  if(_claudeAuthPoll) clearInterval(_claudeAuthPoll);
+  _claudeAuthPoll=setInterval(async()=>{
+    try{ const s=await getJ('/settings'); if(s.claude_authorized){ clearInterval(_claudeAuthPoll); _claudeAuthPoll=null; renderClaudeAuth(true,true); } }catch(e){}
+  }, 2000);
+});
 const _SETTING_PATHS = {notifications:'/settings/notifications', autostart:'/settings/autostart', distill:'/settings/distill'};
 document.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('change', async function(){
   const path = _SETTING_PATHS[this.dataset.setting];
   try{ await post(path,{enabled:this.checked}); }catch(e){ alert('Failed: '+e.message); }
+  if(this.dataset.setting==='distill') loadSettings();  // show/hide the Claude-auth row
 }));
 
 // ── sign out ──
@@ -1000,11 +1029,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if path == "/settings":
                 prefs = _read_notify_prefs()
                 from . import cli
+                from .auth import read_claude_token
                 self._send_json(200, {
                     "notifications_enabled": bool(prefs.get("enabled", True)),
                     "autostart_installed": _autostart_installed(),
                     "autostart_supported": sys.platform == "darwin",
                     "distill_enabled": cli.distill_enabled(),
+                    "claude_authorized": read_claude_token() is not None,
                 })
                 return
             self._send_json(404, {"error": f"unknown path {path}"})
@@ -1118,6 +1149,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     flag.parent.mkdir(parents=True, exist_ok=True)
                     flag.touch()
                 self._send_json(200, {"ok": True})
+                return
+            if path == "/settings/claude-auth":
+                # Run `claude setup-token` (browser OAuth) detached; it stores
+                # the headless token. The SPA polls /settings for claude_authorized.
+                try:
+                    subprocess.Popen(
+                        [_resolve_self_binary(), "setup-claude"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL, start_new_session=True,
+                    )
+                    self._send_json(200, {"ok": True, "started": True})
+                except (OSError, RuntimeError) as e:
+                    self._send_json(500, {"error": str(e)})
                 return
             if path == "/unshare":
                 sid = (body.get("session_id") or "").strip()

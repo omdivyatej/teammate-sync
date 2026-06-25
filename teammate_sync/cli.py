@@ -1003,6 +1003,40 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def capture_claude_token() -> tuple[bool, str]:
+    """Run `claude setup-token` (opens browser OAuth), capture the resulting
+    long-lived token from stdout, and store it for the headless distiller.
+    Returns (ok, message). The token itself is never returned or logged."""
+    import re as _re
+    import subprocess as _sp
+    from .auth import write_claude_token
+    try:
+        claude = _resolve_claude_binary()
+    except RuntimeError:
+        return False, "Claude Code CLI not found."
+    try:
+        res = _sp.run(
+            [claude, "setup-token"],
+            capture_output=True, text=True, timeout=300,
+        )
+    except _sp.TimeoutError:
+        return False, "Timed out waiting for browser authorization."
+    except OSError as e:
+        return False, f"Could not run claude setup-token: {e}"
+    blob = f"{res.stdout}\n{res.stderr}"
+    m = _re.search(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", blob)
+    if not m:
+        return False, "No token found in output (authorization may have been cancelled)."
+    write_claude_token(m.group(0))
+    return True, "Claude authorized for background decision capture."
+
+
+def cmd_setup_claude(args) -> int:
+    ok, msg = capture_claude_token()
+    print(msg)
+    return 0 if ok else 1
+
+
 def cmd_hook(args) -> int:
     """Dispatch a Claude Code session lifecycle hook event."""
     from . import hook as _hook
@@ -1188,6 +1222,10 @@ def main() -> int:
     p_distill.add_argument("--out", required=True, help="Path to knowledge.md to update")
     p_distill.add_argument("--session-id", default=None)
     p_distill.set_defaults(func=cmd_distill)
+
+    # Authorize Claude for headless/background decision capture (browser OAuth
+    # via `claude setup-token`). Stores the token for the daemon's distiller.
+    sub.add_parser("setup-claude", help=argparse.SUPPRESS).set_defaults(func=cmd_setup_claude)
 
     # Internal: the desktop app runs this to pull the latest package from PyPI
     # into a user dir (kept on PYTHONPATH), so it updates without a re-download.
