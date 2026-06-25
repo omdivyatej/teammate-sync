@@ -516,6 +516,19 @@ _INDEX_HTML = r"""<!doctype html>
                             <div class="w-full h-px bg-brand-borderSubtle"></div>
                             <div class="flex items-center justify-between">
                                 <div>
+                                    <h4 class="text-sm font-medium text-white">Capture decisions</h4>
+                                    <p class="text-xs text-brand-textMuted mt-0.5">Silently distill your sessions into a shared decision log (knowledge.md) for /ask-all.</p>
+                                </div>
+                                <label class="relative flex items-center cursor-pointer">
+                                    <input id="set-distill" type="checkbox" class="sr-only peer toggle-checkbox" data-setting="distill">
+                                    <div class="toggle-label w-11 h-6 bg-brand-surface border border-brand-borderSubtle rounded-full transition-colors relative">
+                                        <div class="toggle-dot absolute top-[2px] left-[2px] bg-brand-textMuted rounded-full h-5 w-5 transition-transform border border-black/10"></div>
+                                    </div>
+                                </label>
+                            </div>
+                            <div class="w-full h-px bg-brand-borderSubtle"></div>
+                            <div class="flex items-center justify-between">
+                                <div>
                                     <h4 class="text-sm font-medium text-white">Launch at login</h4>
                                     <p class="text-xs text-brand-textMuted mt-0.5">Start CodeBaton automatically on boot.</p>
                                 </div>
@@ -739,9 +752,10 @@ async function refreshLogs(){
 }
 
 // ── settings ──
-async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; }catch(e){} }
+async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; $('set-distill').checked=!!s.distill_enabled; }catch(e){} }
+const _SETTING_PATHS = {notifications:'/settings/notifications', autostart:'/settings/autostart', distill:'/settings/distill'};
 document.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('change', async function(){
-  const path = this.dataset.setting==='notifications' ? '/settings/notifications' : '/settings/autostart';
+  const path = _SETTING_PATHS[this.dataset.setting];
   try{ await post(path,{enabled:this.checked}); }catch(e){ alert('Failed: '+e.message); }
 }));
 
@@ -985,10 +999,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return
             if path == "/settings":
                 prefs = _read_notify_prefs()
+                from . import cli
                 self._send_json(200, {
                     "notifications_enabled": bool(prefs.get("enabled", True)),
                     "autostart_installed": _autostart_installed(),
                     "autostart_supported": sys.platform == "darwin",
+                    "distill_enabled": cli.distill_enabled(),
                 })
                 return
             self._send_json(404, {"error": f"unknown path {path}"})
@@ -1091,6 +1107,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 enabled = bool(body.get("enabled", False))
                 ok = _install_autostart() if enabled else _uninstall_autostart()
                 self._send_json(200, {"ok": ok})
+                return
+            if path == "/settings/distill":
+                # On by default; opting out writes a disable marker.
+                enabled = bool(body.get("enabled", True))
+                flag = Path("~/.teammate-sync/distill.disabled").expanduser()
+                if enabled:
+                    flag.unlink(missing_ok=True)
+                else:
+                    flag.parent.mkdir(parents=True, exist_ok=True)
+                    flag.touch()
+                self._send_json(200, {"ok": True})
                 return
             if path == "/unshare":
                 sid = (body.get("session_id") or "").strip()

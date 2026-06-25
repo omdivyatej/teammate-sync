@@ -1011,9 +1011,10 @@ def cmd_hook(args) -> int:
 
 
 def distill_enabled() -> bool:
-    """Distillation is opt-in until validated on real machines — flip on by
-    creating ~/.teammate-sync/distill.enabled. Keeps the shipped daemon safe."""
-    return Path("~/.teammate-sync/distill.enabled").expanduser().exists()
+    """Decision capture is ON by default (automatic, silent — like the daemon).
+    Fail-safe: a failed distill just logs and never affects sync. Users can opt
+    OUT via the Settings toggle, which writes ~/.teammate-sync/distill.disabled."""
+    return not Path("~/.teammate-sync/distill.disabled").expanduser().exists()
 
 
 def cmd_distill(args) -> int:
