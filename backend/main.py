@@ -447,10 +447,19 @@ async def create_query(
     user: dict = Depends(github_user_from_bearer),
 ) -> dict:
     """Asker enqueues a live question for `target`. The target's daemon answers
-    it locally (raw transcript never leaves their machine) and posts back."""
+    it locally (raw transcript never leaves their machine) and posts back.
+
+    Requires an ACCEPTED connection between asker and target — the connection
+    is the consent gate. No connection, no query."""
     await require_workspace_member(user, req.org)
     if req.target == user["login"]:
         raise HTTPException(status_code=400, detail="can't query yourself")
+    if not await storage.is_connected(req.org, user["login"], req.target):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"Not connected to {req.target}. Run /connect {req.target} first "
+                    f"(and they must /connect you back) before you can /ask them."),
+        )
     qid = await storage.create_query(req.org, user["login"], req.target, req.question)
     return {"ok": True, "query_id": qid}
 

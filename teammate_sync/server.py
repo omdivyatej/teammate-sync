@@ -663,6 +663,12 @@ def ask_teammate_live(teammate: str, question: str) -> str:
                        headers=headers, timeout=15)
     except httpx.HTTPError as e:
         return f"[Error reaching backend: {e}]"
+    if r.status_code == 403:
+        # Not connected — the consent gate. Surface the guidance as-is.
+        try:
+            return r.json().get("detail", f"Not connected to {teammate}. /connect them first.")
+        except Exception:
+            return f"Not connected to {teammate}. Run /connect {teammate} first."
     if r.status_code != 200:
         return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
     qid = r.json()["query_id"]
