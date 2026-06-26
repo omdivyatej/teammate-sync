@@ -995,23 +995,38 @@ def capture_claude_token() -> tuple[bool, str]:
     and just hangs. The PTY is the fix. Returns (ok, message); the token is
     never returned or logged."""
     import errno
+    import fcntl
     import os as _os
     import pty
     import re as _re
     import select
     import signal as _signal
+    import struct
+    import subprocess as _sp
+    import termios
     import time as _time
     from .auth import write_claude_token
+
+    log_path = Path("~/.teammate-sync/state/setup-token.log").expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    def _dbg(m: str) -> None:
+        with log_path.open("a") as f:
+            f.write(m.rstrip() + "\n")
 
     try:
         claude = _resolve_claude_binary()
     except RuntimeError:
         return False, "Claude Code CLI not found."
+    _dbg(f"--- setup-token start; claude={claude} ---")
 
     env = dict(_os.environ)
     env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
 
-    # Spawn claude attached to a PTY so it thinks it's interactive.
+    _ANSI = _re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|[\r]")
+    _TOKEN = _re.compile(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+")
+    _URL = _re.compile(rb"https://[^\s\"'\\]+")
+
+    # Spawn claude attached to a PTY so it behaves interactively.
     pid, master_fd = pty.fork()
     if pid == 0:  # child
         try:
@@ -1019,9 +1034,17 @@ def capture_claude_token() -> tuple[bool, str]:
         except Exception:
             _os._exit(127)
 
+    # Make the PTY very wide so the long token isn't line-wrapped (an 80-col
+    # default would split it across lines and break capture).
+    try:
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 200, 4000, 0, 0))
+    except OSError:
+        pass
+
     token = None
-    buf = b""
-    deadline = _time.time() + 300  # 5 min for the user to authorize in the browser
+    opened_url = False
+    raw = b""
+    deadline = _time.time() + 300  # 5 min for the user to authorize
     try:
         while _time.time() < deadline:
             try:
@@ -1037,23 +1060,35 @@ def capture_claude_token() -> tuple[bool, str]:
                     continue
                 if not chunk:
                     break
-                buf += chunk
-                m = _re.search(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", buf)
-                if m:
-                    token = m.group(0).decode()
+                raw += chunk
+                clean = _ANSI.sub(b"", raw)
+                # Open the auth URL ourselves so the browser definitely appears
+                # (claude under a PTY may print it but not auto-open).
+                if not opened_url:
+                    um = _URL.search(clean)
+                    if um:
+                        url = um.group(0).decode(errors="ignore")
+                        _dbg(f"opening auth URL: {url[:70]}...")
+                        try:
+                            _sp.Popen(["open", url], env=env,
+                                      stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                        except OSError:
+                            pass
+                        opened_url = True
+                tm = _TOKEN.search(clean)
+                if tm:
+                    token = tm.group(0).decode()
                     break
-            # child already exited?
             try:
                 done_pid, _ = _os.waitpid(pid, _os.WNOHANG)
                 if done_pid == pid:
-                    # drain any final output
                     try:
-                        buf += _os.read(master_fd, 65536)
+                        raw += _os.read(master_fd, 65536)
                     except OSError:
                         pass
-                    m = _re.search(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", buf)
-                    if m:
-                        token = m.group(0).decode()
+                    tm = _TOKEN.search(_ANSI.sub(b"", raw))
+                    if tm:
+                        token = tm.group(0).decode()
                     break
             except OSError:
                 break
@@ -1067,8 +1102,15 @@ def capture_claude_token() -> tuple[bool, str]:
         except OSError:
             pass
 
+    # Log a redacted transcript so failures are diagnosable (token never logged).
+    redacted = _TOKEN.sub(b"sk-ant-oat**REDACTED**", _ANSI.sub(b"", raw))
+    _dbg("transcript (redacted, ANSI-stripped):")
+    _dbg(redacted.decode(errors="replace")[:3000])
+    _dbg(f"--- result: token_captured={bool(token)} ---")
+
     if not token:
-        return False, "No token captured (authorization may have been cancelled or timed out)."
+        return False, ("No token captured — see ~/.teammate-sync/state/setup-token.log "
+                       "for what Claude output.")
     write_claude_token(token)
     return True, "Claude authorized for background decision capture + live answers."
 
