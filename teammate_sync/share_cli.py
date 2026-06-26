@@ -157,6 +157,22 @@ def cmd_share(recipients: list[str]) -> int:
             print("Error: can't share with yourself.", file=sys.stderr)
             return 1
 
+        # Validate: every recipient must be a real member of the workspace.
+        # Otherwise /connect elon-musk would fire a request that can never be
+        # accepted (he's not in the org). Reject non-members outright.
+        try:
+            members = set(workspace_handles())
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        bad = [r for r in recipients if r not in members]
+        if bad:
+            print(f"✗ Not in your workspace: {', '.join(bad)}")
+            print(f"  Connection request NOT sent — these aren't members of "
+                  f"'{backend.org}'.")
+            print(f"  Workspace members: {', '.join(sorted(members)) or '(none)'}")
+            return 1
+
         # For each recipient, fire a connection request. The backend is
         # idempotent — already-accepted = no-op, pending = no-op,
         # mutual-interest = auto-accepts.
