@@ -62,28 +62,51 @@ def _state_dir() -> Path:
     return Path("~/.teammate-sync/state").expanduser()
 
 
-def _pick_live_session() -> dict | None:
-    """Most-recently-active session from the registry: {session_id, cwd,
-    transcript_path}. None if no active session to answer from."""
-    raw_path = _state_dir() / ACTIVE_SESSIONS_FILENAME
-    if not raw_path.exists():
-        return None
+def _read_json(path: Path) -> dict:
     try:
-        data = json.loads(raw_path.read_text())
+        return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _pick_session_for(asker: str) -> dict | None:
+    """Pick which session to answer `asker` from — STRICTLY one the engineer
+    explicitly /connect-ed with THIS asker. Never any other session.
+
+    Consent rule: a session is answerable only if /connect was run in it for
+    this person (it's in .shared-sessions.json with `asker` as a recipient).
+    Among those, pick the most-recently-active. A session the engineer never
+    /connect-ed (e.g. a personal project) is NEVER reachable, even if it's the
+    one they're currently typing in. Returns {session_id, cwd, transcript_path}
+    or None."""
+    from .backend import SHARED_SESSIONS_FILENAME
+    shared = _read_json(_state_dir() / SHARED_SESSIONS_FILENAME).get("sessions", [])
+    # session_ids explicitly /connect-ed with this asker
+    connected_ids = {
+        s["session_id"] for s in shared
+        if isinstance(s, dict) and asker in (s.get("recipients") or [])
+    }
+    if not connected_ids:
         return None
-    sessions = [s for s in data.get("sessions", []) if isinstance(s, dict) and s.get("session_id")]
-    if not sessions:
+
+    active = _read_json(_state_dir() / ACTIVE_SESSIONS_FILENAME).get("sessions", [])
+    # Only connected AND currently-active sessions are forkable; pick newest.
+    candidates = [
+        s for s in active
+        if isinstance(s, dict) and s.get("session_id") in connected_ids
+    ]
+    if not candidates:
         return None
-    sessions.sort(key=lambda s: s.get("last_activity_epoch") or 0, reverse=True)
-    return sessions[0]
+    candidates.sort(key=lambda s: s.get("last_activity_epoch") or 0, reverse=True)
+    return candidates[0]
 
 
 def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tuple[str, str]:
-    """Produce (answer, citation) by forking the live session read-only."""
-    sess = _pick_live_session()
+    """Produce (answer, citation) by forking a /connect-ed session read-only."""
+    sess = _pick_session_for(asker)
     if not sess:
-        return ("Not enough context to answer — no live session right now.", "")
+        return (f"Not found in shared context — no session is /connect-ed with @{asker} "
+                f"right now.", "")
 
     sid = sess["session_id"]
     cwd = sess.get("cwd") or str(Path.home())
