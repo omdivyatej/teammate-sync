@@ -456,24 +456,22 @@ _INDEX_HTML = r"""<!doctype html>
                 <div id="view-sessions" class="view-section">
                     <header class="mb-8">
                         <h2 class="text-2xl font-medium text-white tracking-tight">Sessions</h2>
-                        <p class="text-sm text-brand-textMuted mt-1">Live Claude Code context flowing between you and your team.</p>
+                        <p class="text-sm text-brand-textMuted mt-1">What you've made answerable, and who you can ask. Sessions stay on your machine — only answers travel.</p>
                     </header>
                     <div class="space-y-8">
                         <section>
-                            <div class="flex items-center justify-between mb-3">
-                                <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest flex items-center gap-2">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
-                                    Sharing
-                                </h3>
-                            </div>
+                            <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-lime"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                                You're sharing
+                            </h3>
                             <div id="sess-sharing"></div>
                         </section>
                         <section>
                             <h3 class="text-xs font-mono font-medium text-brand-textMuted uppercase tracking-widest mb-3 flex items-center gap-2">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-cobalt"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
-                                Shared with you
+                                You can ask
                             </h3>
-                            <div id="sess-receiving"></div>
+                            <div id="sess-askable"></div>
                         </section>
                     </div>
                 </div>
@@ -759,29 +757,28 @@ function renderConnections(d){
     : `<p class="text-sm text-brand-textMuted">None.</p>`;
 }
 function renderSessions(d){
-  const mine=d.my_sessions||[];
-  $('sess-sharing').innerHTML = mine.length ? mine.map(sessionRow).join('') : emptyShare();
-  const tm=d.teammates||[];
-  $('sess-receiving').innerHTML = tm.length ? tm.map(t=>`
-    <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] overflow-hidden mb-3">
-      <div class="p-4 flex items-center gap-3 border-b border-white/5">${avatar(t.handle,false)}<span class="text-sm font-medium text-white font-mono">@${esc(t.handle)}</span></div>
-      ${(t.sessions||[]).map(s=>`<div class="p-4 border-t border-white/5 first:border-t-0">
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-          <span class="text-xs font-mono text-brand-textMuted">${esc(s.session_id.slice(0,20))}… · ${ago(s.shared_at)}</span>
-          <button class="px-3 py-1.5 text-xs font-medium text-brand-cobalt bg-brand-cobaltMuted hover:bg-brand-cobalt/20 border border-brand-cobalt/20 rounded transition-colors" onclick="dump('${esc(t.handle)}','${esc(s.session_id)}',this)">View raw context</button>
-        </div></div>`).join('')}
-    </div>`).join('')
-    : `<div class="rounded-lg border border-dashed border-white/10 p-8 text-center"><p class="text-sm text-brand-textMuted">Nothing shared with you yet.</p><p class="text-xs text-brand-textMuted mt-1">A connected teammate runs <span class="font-mono">/connect &lt;you&gt;</span> in their session.</p></div>`;
-}
-async function dump(h,sid,btn){
-  btn.disabled=true; btn.textContent='loading…';
-  try{ const r=await fetch('/dump?teammate='+encodeURIComponent(h)+'&session='+encodeURIComponent(sid)); const t=await r.text();
-    const card=btn.closest('.p-4'); let pre=card.querySelector('pre');
-    if(!pre){ pre=document.createElement('pre'); pre.className='mt-3 p-3 bg-black border border-white/5 rounded text-[11px] font-mono text-brand-textMuted overflow-auto max-h-80 whitespace-pre-wrap'; card.appendChild(pre); }
-    pre.textContent=t; btn.textContent='View raw context'; btn.disabled=false;
-  }catch(e){ btn.textContent='error'; }
-}
+  // "You're sharing": per recipient, from the LOCAL share registry.
+  const shares = d.my_shares || {};            // {recipient: [sid8, ...]}
+  const recips = Object.keys(shares);
+  $('sess-sharing').innerHTML = recips.length ? recips.map(r=>{
+    const sids = shares[r]||[];
+    const chips = sids.map(s=>`<span class="text-[10px] font-mono text-brand-textMuted bg-brand-bg border border-brand-borderSubtle rounded px-1.5 py-0.5">${esc(s)}…</span>`).join(' ');
+    return `<div class="rounded-lg border border-brand-lime/20 bg-[#0D0D0F] p-4 mb-3">
+      <div class="flex items-center gap-3 mb-2">${avatar(r,false)}
+        <span class="text-sm text-white">You're sharing <span class="font-semibold text-brand-lime">${sids.length}</span> session${sids.length===1?'':'s'} with <span class="font-mono">@${esc(r)}</span></span></div>
+      <div class="flex flex-wrap gap-1.5 ml-11">${chips}</div>
+    </div>`;
+  }).join('') : `<div class="rounded-lg border border-dashed border-white/10 p-8 text-center"><p class="text-sm text-brand-textMuted">You're not sharing any session.</p><p class="text-xs text-brand-textMuted mt-1">Run <span class="font-mono text-brand-lime">/connect &lt;teammate&gt;</span> inside a Claude Code session to make it answerable.</p></div>`;
 
+  // "You can ask": accepted connections (their sessions live on their machine).
+  const acc=(d.connections||{}).accepted||[];
+  $('sess-askable').innerHTML = acc.length ? acc.map(x=>`
+    <div class="rounded-lg border border-brand-borderSubtle bg-[#0D0D0F] p-4 mb-3 flex items-center gap-3">${avatar(x.peer_handle,false)}
+      <div class="flex-1 min-w-0"><span class="text-sm text-white font-mono">@${esc(x.peer_handle)}</span>
+        <p class="text-xs text-brand-textMuted mt-0.5">Connected — ask live with <span class="font-mono text-brand-cobalt">/ask ${esc(x.peer_handle)} &lt;question&gt;</span></p></div>
+    </div>`).join('')
+    : `<div class="rounded-lg border border-dashed border-white/10 p-8 text-center"><p class="text-sm text-brand-textMuted">No one to ask yet.</p><p class="text-xs text-brand-textMuted mt-1">Connect with a teammate (both run <span class="font-mono">/connect</span>), then <span class="font-mono">/ask</span> them.</p></div>`;
+}
 // ── activity log ──
 let logPaused=false;
 $('btn-pause-log').addEventListener('click', function(){ logPaused=!logPaused; this.textContent=logPaused?'Resume':'Pause';
@@ -1010,6 +1007,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 snap["signed_in"] = True
                 from .auth import read_claude_token
                 snap["claude_authorized"] = read_claude_token() is not None
+                # What YOU are sharing lives in the LOCAL registry (federated
+                # model uploads nothing). Compute {recipient: [session_id...]}.
+                my_shares: dict[str, list[str]] = {}
+                try:
+                    reg = Path("~/.teammate-sync/state/.shared-sessions.json").expanduser()
+                    if reg.exists():
+                        for s in json.loads(reg.read_text()).get("sessions", []):
+                            sid = (s.get("session_id") or "")[:8]
+                            for r in (s.get("recipients") or []):
+                                my_shares.setdefault(r, [])
+                                if sid and sid not in my_shares[r]:
+                                    my_shares[r].append(sid)
+                except (json.JSONDecodeError, OSError):
+                    pass
+                snap["my_shares"] = my_shares
                 self._send_json(200, snap)
                 return
             if path == "/update/status":
