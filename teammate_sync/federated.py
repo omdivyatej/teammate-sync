@@ -96,21 +96,32 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tu
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
 
+    import time as _time
+    _log("")
+    _log(f"════ Q from @{asker} @ {int(_time.time())} ════")
+    _log(f"  question: {question}")
+    _log(f"  answering from session {sid[:8]} (cwd={cwd})")
+
+    # stream-json + verbose so the FULL trace is visible: every file the model
+    # reads/greps and its final answer. (--verbose is required with stream-json
+    # in print mode.)
     cmd = [
         claude_binary, "-p", "-r", sid, "--fork-session",
+        "--output-format", "stream-json", "--verbose",
         "--allowedTools", "Read Grep Glob",
         "--disallowedTools", " ".join(_SECRET_DENY),
         "--strict-mcp-config",
         _WRAP.format(asker=asker, question=question),
     ]
+    t0 = _time.time()
     try:
         res = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=150,
         )
     except subprocess.TimeoutExpired:
+        _log("  ✗ timed out (150s)")
         return ("Timed out generating an answer.", f"session {sid[:8]}")
     finally:
-        # Delete the forked session jsonl(s) — cruft, not shared/distilled anyway.
         if project_dir and project_dir.exists():
             for f in set(project_dir.glob("*.jsonl")) - before:
                 try:
@@ -119,10 +130,38 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tu
                     pass
 
     if res.returncode != 0:
-        detail = (res.stderr.strip() or res.stdout.strip())[:200]
-        _log(f"[federated] claude failed rc={res.returncode}: {detail}")
+        detail = (res.stderr.strip() or res.stdout.strip())[:300]
+        _log(f"  ✗ claude failed rc={res.returncode}: {detail}")
         return ("Couldn't generate an answer right now.", f"session {sid[:8]}")
-    answer = res.stdout.strip() or "Not enough context to answer."
+
+    # Parse the stream-json events: log the model's process (reads/greps/text)
+    # and pull the final answer from the terminal 'result' event.
+    answer = ""
+    for line in res.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = ev.get("type")
+        if etype == "assistant":
+            for blk in ev.get("message", {}).get("content", []):
+                if not isinstance(blk, dict):
+                    continue
+                if blk.get("type") == "text" and blk.get("text", "").strip():
+                    _log(f"    · thinking/text: {blk['text'].strip()[:300]}")
+                elif blk.get("type") == "tool_use":
+                    inp = blk.get("input", {}) or {}
+                    tgt = inp.get("file_path") or inp.get("pattern") or inp.get("path") or ""
+                    _log(f"    · {blk.get('name','tool')}: {str(tgt)[:120]}")
+        elif etype == "result":
+            answer = (ev.get("result") or "").strip()
+    if not answer:
+        # Fallback: maybe plain text slipped through.
+        answer = res.stdout.strip()[:1000] or "Not enough context to answer."
+    _log(f"  ✓ answer ({_time.time()-t0:.1f}s): {answer[:500]}")
     return (answer, f"session {sid[:8]}")
 
 
