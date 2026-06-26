@@ -987,31 +987,90 @@ def _iso_now() -> str:
 
 
 def capture_claude_token() -> tuple[bool, str]:
-    """Run `claude setup-token` (opens browser OAuth), capture the resulting
-    long-lived token from stdout, and store it for the headless distiller.
-    Returns (ok, message). The token itself is never returned or logged."""
+    """Run `claude setup-token` under a PSEUDO-TERMINAL so it behaves exactly
+    like it does in a real terminal: auto-opens the browser, waits for the user
+    to authorize, then prints the long-lived token — which we capture and store.
+
+    Without a PTY, claude detects 'non-interactive', doesn't open the browser,
+    and just hangs. The PTY is the fix. Returns (ok, message); the token is
+    never returned or logged."""
+    import errno
+    import os as _os
+    import pty
     import re as _re
-    import subprocess as _sp
+    import select
+    import signal as _signal
+    import time as _time
     from .auth import write_claude_token
+
     try:
         claude = _resolve_claude_binary()
     except RuntimeError:
         return False, "Claude Code CLI not found."
+
+    env = dict(_os.environ)
+    env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+
+    # Spawn claude attached to a PTY so it thinks it's interactive.
+    pid, master_fd = pty.fork()
+    if pid == 0:  # child
+        try:
+            _os.execve(claude, [claude, "setup-token"], env)
+        except Exception:
+            _os._exit(127)
+
+    token = None
+    buf = b""
+    deadline = _time.time() + 300  # 5 min for the user to authorize in the browser
     try:
-        res = _sp.run(
-            [claude, "setup-token"],
-            capture_output=True, text=True, timeout=300,
-        )
-    except _sp.TimeoutError:
-        return False, "Timed out waiting for browser authorization."
-    except OSError as e:
-        return False, f"Could not run claude setup-token: {e}"
-    blob = f"{res.stdout}\n{res.stderr}"
-    m = _re.search(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", blob)
-    if not m:
-        return False, "No token found in output (authorization may have been cancelled)."
-    write_claude_token(m.group(0))
-    return True, "Claude authorized for background decision capture."
+        while _time.time() < deadline:
+            try:
+                r, _, _ = select.select([master_fd], [], [], 3)
+            except (OSError, ValueError):
+                break
+            if master_fd in r:
+                try:
+                    chunk = _os.read(master_fd, 4096)
+                except OSError as e:
+                    if e.errno == errno.EIO:  # PTY closed = child exited
+                        break
+                    continue
+                if not chunk:
+                    break
+                buf += chunk
+                m = _re.search(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", buf)
+                if m:
+                    token = m.group(0).decode()
+                    break
+            # child already exited?
+            try:
+                done_pid, _ = _os.waitpid(pid, _os.WNOHANG)
+                if done_pid == pid:
+                    # drain any final output
+                    try:
+                        buf += _os.read(master_fd, 65536)
+                    except OSError:
+                        pass
+                    m = _re.search(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", buf)
+                    if m:
+                        token = m.group(0).decode()
+                    break
+            except OSError:
+                break
+    finally:
+        try:
+            _os.kill(pid, _signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            _os.close(master_fd)
+        except OSError:
+            pass
+
+    if not token:
+        return False, "No token captured (authorization may have been cancelled or timed out)."
+    write_claude_token(token)
+    return True, "Claude authorized for background decision capture + live answers."
 
 
 def cmd_setup_claude(args) -> int:

@@ -538,13 +538,17 @@ _INDEX_HTML = r"""<!doctype html>
                                     <p class="text-xs text-brand-textMuted mt-0.5">Silently distill your sessions into a shared decision log (knowledge.md) for /ask-all, and power live /ask answers.</p>
                                     <div id="claude-auth-row" class="hidden mt-3">
                                         <span id="claude-auth-status" class="text-xs"></span>
-                                        <div id="claude-auth-form" class="hidden mt-2">
-                                            <p class="text-xs text-brand-textMuted mb-1.5">In a terminal, run <code class="text-brand-lime">claude setup-token</code>, then paste the token:</p>
-                                            <div class="flex items-center gap-2">
-                                                <input id="claude-token-input" type="password" placeholder="sk-ant-oat01-…" class="flex-1 bg-brand-surface border border-brand-borderSubtle rounded px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-brand-lime/50">
-                                                <button id="btn-claude-save" class="text-xs font-medium text-black bg-brand-lime px-3 py-1.5 rounded hover:opacity-90 transition whitespace-nowrap">Save</button>
+                                        <div id="claude-auth-actions" class="hidden mt-2">
+                                            <button id="btn-claude-auth" class="text-xs font-medium text-black bg-brand-lime px-3 py-1.5 rounded hover:opacity-90 transition">Authorize Claude (opens browser)</button>
+                                            <button id="btn-claude-manual" class="ml-2 text-xs text-brand-textMuted hover:text-white underline">paste a token instead</button>
+                                            <div id="claude-auth-form" class="hidden mt-2">
+                                                <p class="text-xs text-brand-textMuted mb-1.5">Run <code class="text-brand-lime">claude setup-token</code> in a terminal, then paste the token:</p>
+                                                <div class="flex items-center gap-2">
+                                                    <input id="claude-token-input" type="password" placeholder="sk-ant-oat01-…" class="flex-1 bg-brand-surface border border-brand-borderSubtle rounded px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-brand-lime/50">
+                                                    <button id="btn-claude-save" class="text-xs font-medium text-black bg-brand-lime px-3 py-1.5 rounded hover:opacity-90 transition whitespace-nowrap">Save</button>
+                                                </div>
+                                                <p id="claude-token-err" class="hidden text-xs text-red-400 mt-1"></p>
                                             </div>
-                                            <p id="claude-token-err" class="hidden text-xs text-red-400 mt-1"></p>
                                         </div>
                                     </div>
                                 </div>
@@ -783,19 +787,30 @@ async function refreshLogs(){
 // ── settings ──
 async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; $('set-distill').checked=!!s.distill_enabled; renderClaudeAuth(s.distill_enabled, s.claude_authorized); }catch(e){} }
 function renderClaudeAuth(distillOn, authed){
-  const row=$('claude-auth-row'), status=$('claude-auth-status'), form=$('claude-auth-form');
+  const row=$('claude-auth-row'), status=$('claude-auth-status'), actions=$('claude-auth-actions');
   if(!distillOn){ row.classList.add('hidden'); return; }
   row.classList.remove('hidden');
   if(authed){
     status.textContent='✓ Claude authorized for background capture + live answers';
     status.className='text-xs text-brand-lime';
-    form.classList.add('hidden');
+    actions.classList.add('hidden');
   } else {
     status.textContent='Claude not authorized — capture & live answers are idle.';
     status.className='text-xs text-brand-textMuted';
-    form.classList.remove('hidden');
+    actions.classList.remove('hidden');
   }
 }
+let _claudeAuthPoll=null;
+$('btn-claude-auth').addEventListener('click', async function(){
+  this.disabled=true; this.textContent='Opening browser — authorize there…';
+  try{ await post('/settings/claude-auth',{}); }catch(e){}
+  $('claude-auth-status').textContent='Waiting for you to authorize in the browser…';
+  if(_claudeAuthPoll) clearInterval(_claudeAuthPoll);
+  _claudeAuthPoll=setInterval(async()=>{
+    try{ const s=await getJ('/settings'); if(s.claude_authorized){ clearInterval(_claudeAuthPoll); _claudeAuthPoll=null; renderClaudeAuth(true,true); } }catch(e){}
+  }, 2000);
+});
+$('btn-claude-manual').addEventListener('click', function(){ $('claude-auth-form').classList.toggle('hidden'); });
 $('btn-claude-save').addEventListener('click', async function(){
   const inp=$('claude-token-input'), err=$('claude-token-err');
   const tok=inp.value.trim();
@@ -1178,10 +1193,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     flag.touch()
                 self._send_json(200, {"ok": True})
                 return
+            if path == "/settings/claude-auth":
+                # Automatic flow: spawn `setup-claude`, which runs
+                # `claude setup-token` under a PTY (opens the browser, captures
+                # the token). Detached; the SPA polls /settings for
+                # claude_authorized.
+                try:
+                    subprocess.Popen(
+                        [_resolve_self_binary(), "setup-claude"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL, start_new_session=True,
+                    )
+                    self._send_json(200, {"ok": True, "started": True})
+                except (OSError, RuntimeError) as e:
+                    self._send_json(500, {"error": str(e)})
+                return
             if path == "/settings/claude-token":
-                # Paste-field flow: the user ran `claude setup-token` in their
-                # terminal and pastes the resulting token. Reliable — no fragile
-                # capture of an interactive browser flow.
+                # Paste-field FALLBACK: the user ran `claude setup-token` in
+                # their terminal and pastes the resulting token.
                 import re as _re
                 tok = (body.get("token") or "").strip()
                 if not _re.fullmatch(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]+", tok):
