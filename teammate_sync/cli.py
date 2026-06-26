@@ -374,43 +374,25 @@ _RETIRED_SLASH_COMMANDS = {
 
 
 _ASK_SLASH_MD = """---
-description: Ask a connected teammate (or several) a question. Reads their raw Claude Code session context and answers from it.
-argument-hint: "<handle-or-alias>[,<handle-or-alias>...] <question>"
+description: Ask a teammate's LIVE Claude session a question — their Claude answers from their real session; you get just the answer.
+argument-hint: "<handle-or-alias> <question>"
 ---
 
-The user wants to query teammate-sync. Parse the user's argument as:
-  - first whitespace-separated token = a comma-separated list of teammate
-    identifiers (a GitHub handle OR a local alias the user set, like "om")
-  - everything after the first token = the question text
+The user wants to ask ONE teammate a live question. Parse the argument:
+  - first whitespace-separated token = the teammate's handle or local alias
+  - everything after = the question text
 
-For each identifier in the list, call the MCP tool
-`mcp__teammate-sync__get_teammate_context` with that value verbatim — pass
-aliases through as-is; the tool resolves them to handles itself. It returns
-the raw assembled corpus of that teammate's shared sessions (with active-
-session annotations like [ACTIVE — LIVE NOW] and a freshness stamp).
+Call the MCP tool `mcp__teammate-sync__ask_teammate_live` with
+`teammate` = that handle/alias (pass it as-is; the tool resolves aliases) and
+`question` = the rest. The teammate's OWN Claude answers it from their live
+session on their machine — their raw transcript never leaves their device; you
+receive only the answer. This can take a few seconds to tens of seconds.
 
-Then YOU read the corpus and answer the user's question using ONLY what it
-contains. The reader wants the answer, NOT a status report — keep it tight:
-  - Lead with the answer in 1–3 sentences. No preamble ("Based on the
-    corpus…"), no restating the question.
-  - Do NOT narrate session bookkeeping. Never mention how many sessions
-    there are, which are active vs idle, freshness, timestamps, "last active
-    N minutes ago", cwd, or the [ACTIVE — LIVE NOW] / [MOST RECENT SESSION] /
-    [older session] labels. Those exist for YOU to pick the right source —
-    they are not part of the answer.
-  - End with ONE short citation in parentheses: the session id (first 8
-    chars) or the note filename you drew from, e.g. "(session a1b2c3d4)".
-    One citation, not a list.
-  - For "right now"/"currently" questions, silently prefer the live session;
-    if nothing is live, just answer from their most recent work — don't
-    explain that it isn't live.
-  - If the answer isn't in the corpus, say exactly: "Not found in shared context."
-  - Don't speculate beyond what's written.
-  - Multiple handles: answer each under a short "@handle:" line, same rules.
-
-If the tool returns a message about content not being visible (no
-/connect-back, no shared sessions), surface it as-is — the user needs to
-act, you can't synthesize around it.
+Then present the returned text to the user as-is — it is ALREADY the answer,
+not raw context to reason over. Do not add preamble or restate the question.
+  - If the tool notes the teammate was offline and shows their recorded
+    decisions, present those and make clear they're recorded, not live.
+  - If it says exactly 'Not found in shared context.', say exactly that.
 
 The user's argument is: $ARGUMENTS
 """

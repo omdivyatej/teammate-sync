@@ -611,6 +611,28 @@ def main() -> int:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    # ── Federated query answer-loop ──────────────────────────────────────────
+    # Poll for live questions teammates addressed to me, answer each locally
+    # from my real session (raw transcript never leaves this machine), post back
+    # just the answer. Runs in a background thread; fail-safe per cycle.
+    def _query_poller():
+        from . import federated
+        from .auth import read_claude_token
+        def _claude():
+            from .cli import _resolve_claude_binary
+            return _resolve_claude_binary()
+        while not shutdown.is_set():
+            try:
+                federated.poll_and_answer(
+                    read_claude_token, backend.org, backend.backend_url, _claude,
+                )
+            except Exception as e:
+                print(f"[sync] query poll error (non-fatal): {e}", flush=True)
+            shutdown.wait(5)
+
+    poller = threading.Thread(target=_query_poller, daemon=True)
+    poller.start()
+
     try:
         shutdown.wait()
     finally:

@@ -626,6 +626,90 @@ def get_teammate_context(teammate: str) -> str:
 
 
 @mcp.tool()
+def ask_teammate_live(teammate: str, question: str) -> str:
+    """Ask a teammate's LIVE Claude session a question and get their answer.
+
+    This is the primary `/ask` path. The question is sent to the teammate's
+    machine, where THEIR Claude answers it from their real, current session —
+    read-only — and posts back just the answer. Their raw transcript never
+    leaves their machine; you only receive the answer. Works while they're
+    online with the engine running.
+
+    If they're offline / don't answer in time, this falls back to their
+    recorded decisions (knowledge.md) and says so.
+
+    Args:
+        teammate: GitHub handle or local alias of the person to ask.
+        question: The question to answer from their live session.
+
+    Returns:
+        The teammate's answer (+ a citation), or their recorded decisions as a
+        fallback, or a clear "not reachable" message.
+    """
+    import time as _time
+    from .aliases import resolve as _resolve_alias
+    teammate = _resolve_alias(teammate)
+    try:
+        auth = read_auth()
+    except (FileNotFoundError, ValueError) as e:
+        return f"[Error: {e}]"
+    base = auth["backend_url"].rstrip("/")
+    headers = {"Authorization": f"Bearer {auth['token']}"}
+    import httpx
+    # 1. Enqueue the question for the teammate's daemon.
+    try:
+        r = httpx.post(f"{base}/v1/query",
+                       json={"org": auth["org"], "target": teammate, "question": question},
+                       headers=headers, timeout=15)
+    except httpx.HTTPError as e:
+        return f"[Error reaching backend: {e}]"
+    if r.status_code != 200:
+        return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
+    qid = r.json()["query_id"]
+
+    # 2. Poll for the answer (their Claude takes a few seconds to tens of seconds).
+    deadline = _time.time() + 55
+    while _time.time() < deadline:
+        _time.sleep(3)
+        try:
+            qr = httpx.get(f"{base}/v1/query/{qid}", params={"org": auth["org"]},
+                           headers=headers, timeout=15)
+        except httpx.HTTPError:
+            continue
+        if qr.status_code != 200:
+            continue
+        q = qr.json()
+        if q.get("status") == "answered":
+            cite = f" ({q['citation']})" if q.get("citation") else ""
+            return f"{q.get('answer', '').strip()}\n\n— @{teammate}, live{cite}"
+
+    # 3. Timed out → fall back to their recorded decisions (offline path).
+    fallback = _knowledge_for(teammate, auth, headers, base)
+    if fallback:
+        return (f"@{teammate} didn't answer live (likely offline). From their "
+                f"recorded decisions:\n\n{fallback}")
+    return (f"@{teammate} isn't reachable live and has no recorded decisions yet. "
+            f"Say exactly 'Not found in shared context.'")
+
+
+def _knowledge_for(teammate: str, auth: dict, headers: dict, base: str) -> str | None:
+    """Fetch just `teammate`'s knowledge.md from the durable store, for the
+    offline fallback of a live query."""
+    import httpx
+    try:
+        r = httpx.get(f"{base}/v1/knowledge", params={"org": auth["org"]},
+                      headers=headers, timeout=15)
+        if r.status_code != 200:
+            return None
+        for d in r.json().get("docs", []):
+            if d.get("engineer_handle") == teammate:
+                return d.get("content")
+    except httpx.HTTPError:
+        return None
+    return None
+
+
+@mcp.tool()
 def query_team_knowledge() -> str:
     """Fetch the team's accumulated decision knowledge across the whole org.
 
