@@ -298,46 +298,19 @@ class DaemonState:
 
     def reconcile_shared_sessions(self) -> None:
         """
-        Called when .shared-sessions.json changes. Computes the new
-        shared-session set and reacts:
-          - empty → has sessions: ACTIVATE + initial_sync_all
-          - has sessions → empty: DEACTIVATE + cleanup_backend
-          - changed contents (both non-empty): re-run initial_sync_all
-            (its mirror semantics drop now-unshared session jsonls from
-            backend in the deletion pass)
+        Called when .shared-sessions.json changes. Update the local registry of
+        which sessions are /share'd with whom — federated answering and distill-
+        gating read it. NO backend file sync: nothing is uploaded in the
+        federated model (only knowledge.md, via the distiller's /v1/knowledge
+        push).
         """
         with self._lock:
             new_info = read_shared_session_info(self.workspace)
-            old_info = self.shared_session_info
+            old_set = set(self.shared_session_info.keys())
             new_set = set(new_info.keys())
-            old_set = set(old_info.keys())
-
-            if not old_set and new_set:
-                print(
-                    f"[sync] share-mode ACTIVATED ({len(new_set)} session(s) shared) → "
-                    f"uploading workspace + shared sessions",
-                    flush=True,
-                )
-                self.shared_session_info = new_info
-                n = initial_sync_all(self.sources, self.backend, new_info, last_uploaded_size=self.last_uploaded_size)
-                print(f"[sync] initial sync complete: {n} files uploaded", flush=True)
-            elif old_set and not new_set:
-                print("[sync] share-mode DEACTIVATED → cleaning backend", flush=True)
-                n = cleanup_backend(self.backend)
-                self.shared_session_info = new_info  # empty
-                print(f"[sync] backend cleaned: {n} objects removed", flush=True)
-            elif old_info != new_info:
-                added = new_set - old_set
-                removed = old_set - new_set
-                changed = {sid for sid in new_set & old_set if new_info[sid] != old_info[sid]}
-                print(
-                    f"[sync] shared set changed (+{len(added)} -{len(removed)} "
-                    f"~{len(changed)} recipient-changes) → reconciling",
-                    flush=True,
-                )
-                self.shared_session_info = new_info
-                n = initial_sync_all(self.sources, self.backend, new_info, last_uploaded_size=self.last_uploaded_size)
-                print(f"[sync] reconciliation complete: {n} files in sync", flush=True)
+            self.shared_session_info = new_info
+            if new_set != old_set:
+                print(f"[sync] shared sessions now: {sorted(new_set) or '(none)'}", flush=True)
 
 
 class MirrorHandler(FileSystemEventHandler):
@@ -401,71 +374,21 @@ class MirrorHandler(FileSystemEventHandler):
             self._pending_timer.start()
 
     def _upload(self, src_path: str, label: str) -> None:
+        # FEDERATED MODEL: nothing is uploaded to the backend. Raw transcripts,
+        # active-sessions, logs, CLAUDE.md — all stay LOCAL. The only thing that
+        # reaches the backend is knowledge.md, pushed to /v1/knowledge by the
+        # distiller. So this just triggers distillation when a /share'd session's
+        # transcript changes. (Distilling only /share'd sessions keeps personal
+        # sessions out of the org-wide knowledge.md.)
         try:
+            if self.is_workspace:
+                return  # workspace files never leave the machine
             key = self._rel_key(src_path)
-            data = Path(src_path).read_bytes()
-
-            # The live-sessions registry is filtered to /share'd sessions only
-            # (no peeking at unconnected sessions) and always full-uploaded —
-            # a filtered body isn't an append of the previous one.
-            if key == ACTIVE_SESSIONS_FILENAME:
-                data = filter_active_sessions(data, self.state.shared_session_ids)
-                self.state.backend.put_bytes(key, data, session_id=None, recipients=None)
-                self.state.last_uploaded_size[key] = len(data)
-                print(f"[sync] {label} → {key} (shared-only, {len(data)}B)", flush=True)
-                self._schedule_state_write()
-                return
-
-            current_size = len(data)
-            sid: str | None = None
-            recipients: list[str] | None = None
-            if not self.is_workspace:
-                sid = extract_session_id_from_path(key)
-                if sid:
-                    recipients = self.state.recipients_for(sid)
-            recip_label = f" → [{', '.join(recipients)}]" if recipients else ""
-
-            # Try a delta (append-only) upload first if we have a recorded
-            # size for this file AND the file grew. Backend rejects if its
-            # own size doesn't match our recorded baseline (size_mismatch),
-            # which can happen if the daemon restarted or another writer
-            # touched the file; in that case we fall back to full upload.
-            last_size = self.state.last_uploaded_size.get(key, 0)
-            if last_size and current_size > last_size:
-                delta = data[last_size:]
-                try:
-                    ok, server_size = self.state.backend.append_bytes(
-                        key, delta, expected_size=last_size,
-                        session_id=sid, recipients=recipients,
-                    )
-                    if ok:
-                        self.state.last_uploaded_size[key] = current_size
-                        print(
-                            f"[sync] {label} → {key} (Δ {len(delta)}B / {current_size}B total){recip_label}",
-                            flush=True,
-                        )
-                        self._schedule_state_write()
-                        if sid:
-                            self.state.schedule_distill(Path(src_path), sid)
-                        return
-                    # Backend size didn't match ours; fall through to full
-                    # upload below. server_size tells us what they have now.
-                    self.state.last_uploaded_size[key] = server_size
-                except Exception as e:
-                    print(f"[sync] delta upload failed, falling back to full: {e}", flush=True)
-
-            # Full upload — initial sync of a new file, after mismatch, or
-            # if the file shrunk (shouldn't happen for jsonl but be safe).
-            self.state.backend.put_bytes(
-                key, data, session_id=sid, recipients=recipients,
-            )
-            self.state.last_uploaded_size[key] = current_size
-            print(f"[sync] {label} → {key} (full {current_size}B){recip_label}", flush=True)
-            self._schedule_state_write()
-            if sid:
+            sid = extract_session_id_from_path(key)
+            if sid and sid in self.state.shared_session_ids:
                 self.state.schedule_distill(Path(src_path), sid)
         except Exception as e:
-            print(f"[sync] error on {label} {src_path}: {e}", flush=True)
+            print(f"[sync] watch error on {label} {src_path}: {e}", flush=True)
 
     def on_created(self, event):
         if event.is_directory or self._should_skip(event.src_path):
@@ -494,56 +417,27 @@ class MirrorHandler(FileSystemEventHandler):
         self._upload(event.src_path, "modified")
 
     def on_deleted(self, event):
-        if event.is_directory or self._should_skip(event.src_path):
+        # Federated model uploads nothing, so there's nothing to delete on the
+        # backend. Only react to the share-state file changing.
+        if event.is_directory:
             return
         if self._is_share_state_file(event.src_path):
             self.state.reconcile_shared_sessions()
-            return
-        if not self.state.is_active:
-            return
-        key = self._rel_key(event.src_path)
-        # Always allow deletes for backend hygiene — even if filter would
-        # reject the upload, we don't want stale keys lingering.
-        try:
-            self.state.backend.delete_key(key)
-            self.state.last_uploaded_size.pop(key, None)
-            print(f"[sync] deleted → {key}", flush=True)
-            self._schedule_state_write()
-        except Exception as e:
-            print(f"[sync] error on delete {event.src_path}: {e}", flush=True)
 
     def on_moved(self, event):
-        if event.is_directory or self._should_skip(event.dest_path):
+        if event.is_directory:
             return
         if self._is_share_state_file(event.dest_path) or self._is_share_state_file(event.src_path):
             self.state.reconcile_shared_sessions()
             return
-        if not self.state.is_active:
-            return
+        # A /share'd session's transcript moved/renamed — re-distill it.
         try:
-            old_key = self._rel_key(event.src_path)
-            new_key = self._rel_key(event.dest_path)
-            # Apply the filter to the destination — if the new path is not
-            # an allowed session, just delete the old key (don't upload).
-            if self._is_allowed_for_session_filter(new_key):
-                data = Path(event.dest_path).read_bytes()
-                sid: str | None = None
-                recipients: list[str] | None = None
-                if not self.is_workspace:
-                    sid = extract_session_id_from_path(new_key)
-                    if sid:
-                        recipients = self.state.recipients_for(sid)
-                self.state.backend.put_bytes(
-                    new_key, data, session_id=sid, recipients=recipients,
-                )
-                self.state.last_uploaded_size[new_key] = len(data)
-                # Old path is no longer current — its baseline is stale.
-                self.state.last_uploaded_size.pop(old_key, None)
-            self.state.backend.delete_key(old_key)
-            print(f"[sync] moved → {new_key}", flush=True)
-            self._schedule_state_write()
+            if not self.is_workspace:
+                sid = extract_session_id_from_path(self._rel_key(event.dest_path))
+                if sid and sid in self.state.shared_session_ids:
+                    self.state.schedule_distill(Path(event.dest_path), sid)
         except Exception as e:
-            print(f"[sync] error on move {event.src_path} → {event.dest_path}: {e}", flush=True)
+            print(f"[sync] watch error on move: {e}", flush=True)
 
 
 def main() -> int:
@@ -586,13 +480,19 @@ def main() -> int:
 
     state = DaemonState(workspace, sources, backend)
 
+    # FEDERATED MODEL: the daemon no longer uploads files. One-time, purge any
+    # files left on the backend by older versions (raw transcripts, logs, etc.)
+    # so previously-synced data doesn't linger. Best-effort.
+    try:
+        n = cleanup_backend(backend)
+        if n:
+            print(f"[sync] purged {n} legacy file(s) from backend (federated model uploads nothing)", flush=True)
+    except Exception as e:
+        print(f"[sync] legacy purge skipped (non-fatal): {e}", flush=True)
+
     if state.is_active:
-        n = initial_sync_all(sources, backend, state.shared_session_info)
-        print(
-            f"[sync] initial sync complete: {n} files uploaded "
-            f"({len(state.shared_session_info)} session(s) /share'd)",
-            flush=True,
-        )
+        print(f"[sync] {len(state.shared_session_info)} session(s) /connect-ed; "
+              f"distilling decisions locally, answering queries federated.", flush=True)
     else:
         print("[sync] idle — nothing shared yet. Run /connect <teammate> in a Claude Code session to start sharing.", flush=True)
 
