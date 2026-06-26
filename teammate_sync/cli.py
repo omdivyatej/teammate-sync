@@ -1000,7 +1000,6 @@ def capture_claude_token() -> tuple[bool, str]:
     import pty
     import re as _re
     import select
-    import signal as _signal
     import struct
     import subprocess as _sp
     import termios
@@ -1021,30 +1020,37 @@ def capture_claude_token() -> tuple[bool, str]:
 
     env = dict(_os.environ)
     env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    env["COLUMNS"] = "4000"
+    env["LINES"] = "200"
 
     _ANSI = _re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|[\r]")
-    _TOKEN = _re.compile(rb"sk-ant-oat\d{2}-[A-Za-z0-9_-]+")
+    # Any sk-ant token type (oat01, at01, …), long body — broad on purpose.
+    _TOKEN = _re.compile(rb"sk-ant-[a-z]+\d{2}-[A-Za-z0-9_-]{40,}")
     _URL = _re.compile(rb"https://[^\s\"'\\]+")
 
-    # Spawn claude attached to a PTY so it behaves interactively.
-    pid, master_fd = pty.fork()
-    if pid == 0:  # child
-        try:
-            _os.execve(claude, [claude, "setup-token"], env)
-        except Exception:
-            _os._exit(127)
-
-    # Make the PTY very wide so the long token isn't line-wrapped (an 80-col
-    # default would split it across lines and break capture).
+    # openpty (not pty.fork) so we can size the slave WIDE *before* claude
+    # starts — otherwise there's a race where claude reads the default 80-col
+    # width at startup and line-wraps the ~100-char token, breaking capture.
+    master_fd, slave_fd = pty.openpty()
     try:
-        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 200, 4000, 0, 0))
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 200, 4000, 0, 0))
     except OSError:
         pass
+    try:
+        proc = _sp.Popen(
+            [claude, "setup-token"],
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            env=env, start_new_session=True, close_fds=True,
+        )
+    except OSError as e:
+        _os.close(master_fd); _os.close(slave_fd)
+        return False, f"Could not launch claude setup-token: {e}"
+    _os.close(slave_fd)
 
     token = None
     opened_url = False
     raw = b""
-    deadline = _time.time() + 300  # 5 min for the user to authorize
+    deadline = _time.time() + 300
     try:
         while _time.time() < deadline:
             try:
@@ -1055,15 +1061,13 @@ def capture_claude_token() -> tuple[bool, str]:
                 try:
                     chunk = _os.read(master_fd, 4096)
                 except OSError as e:
-                    if e.errno == errno.EIO:  # PTY closed = child exited
+                    if e.errno == errno.EIO:
                         break
                     continue
                 if not chunk:
                     break
                 raw += chunk
                 clean = _ANSI.sub(b"", raw)
-                # Open the auth URL ourselves so the browser definitely appears
-                # (claude under a PTY may print it but not auto-open).
                 if not opened_url:
                     um = _URL.search(clean)
                     if um:
@@ -1079,22 +1083,18 @@ def capture_claude_token() -> tuple[bool, str]:
                 if tm:
                     token = tm.group(0).decode()
                     break
-            try:
-                done_pid, _ = _os.waitpid(pid, _os.WNOHANG)
-                if done_pid == pid:
-                    try:
-                        raw += _os.read(master_fd, 65536)
-                    except OSError:
-                        pass
-                    tm = _TOKEN.search(_ANSI.sub(b"", raw))
-                    if tm:
-                        token = tm.group(0).decode()
-                    break
-            except OSError:
+            if proc.poll() is not None:
+                try:
+                    raw += _os.read(master_fd, 65536)
+                except OSError:
+                    pass
+                tm = _TOKEN.search(_ANSI.sub(b"", raw))
+                if tm:
+                    token = tm.group(0).decode()
                 break
     finally:
         try:
-            _os.kill(pid, _signal.SIGTERM)
+            proc.terminate()
         except OSError:
             pass
         try:
@@ -1102,15 +1102,31 @@ def capture_claude_token() -> tuple[bool, str]:
         except OSError:
             pass
 
-    # Log a redacted transcript so failures are diagnosable (token never logged).
-    redacted = _TOKEN.sub(b"sk-ant-oat**REDACTED**", _ANSI.sub(b"", raw))
+    redacted = _TOKEN.sub(b"sk-ant-**REDACTED**", _ANSI.sub(b"", raw))
     _dbg("transcript (redacted, ANSI-stripped):")
     _dbg(redacted.decode(errors="replace")[:3000])
-    _dbg(f"--- result: token_captured={bool(token)} ---")
 
     if not token:
-        return False, ("No token captured — see ~/.teammate-sync/state/setup-token.log "
-                       "for what Claude output.")
+        _dbg("--- result: no token matched ---")
+        return False, ("No token captured — see ~/.teammate-sync/state/setup-token.log.")
+
+    # Validate the captured token actually authenticates before storing it.
+    # This is the safety net: if capture dropped/mangled a character, the token
+    # won't work and we refuse to save garbage.
+    _dbg(f"--- captured a token (len {len(token)}); validating… ---")
+    venv = dict(env)
+    venv["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    try:
+        vr = _sp.run([claude, "-p", "reply with: ok"],
+                     capture_output=True, text=True, timeout=60, env=venv)
+        valid = vr.returncode == 0 and bool(vr.stdout.strip())
+    except (OSError, _sp.SubprocessError):
+        valid = False
+    _dbg(f"--- validation: {'PASS' if valid else 'FAIL'} ---")
+    if not valid:
+        return False, ("Captured a token but it didn't validate (capture may have "
+                       "mangled it). See setup-token.log; try again.")
+
     write_claude_token(token)
     return True, "Claude authorized for background decision capture + live answers."
 
