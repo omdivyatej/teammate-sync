@@ -355,6 +355,17 @@ _INDEX_HTML = r"""<!doctype html>
                     </div>
                 </div>
 
+                <!-- NOT-AUTHORIZED banner: shown when this machine has no Claude
+                     token, so it can't answer teammates' live /ask questions. -->
+                <div id="authz-banner" class="hidden mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center gap-3 text-sm">
+                    <span class="flex-shrink-0 text-amber-400">⚠</span>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-white font-medium">Claude not authorized on this machine</p>
+                        <p class="text-brand-textMuted text-xs mt-0.5">Teammates can't get live <code>/ask</code> answers from you until you authorize. (You can still ask others.)</p>
+                    </div>
+                    <button id="authz-banner-btn" class="flex-shrink-0 px-3 py-1.5 rounded-md bg-amber-400 text-black text-xs font-semibold hover:opacity-90 transition">Authorize Claude</button>
+                </div>
+
                 <!-- OVERVIEW -->
                 <div id="view-overview" class="view-section active">
                     <header class="mb-8">
@@ -653,6 +664,7 @@ function go(id){
   if(id==='view-settings') loadSettings();
 }
 tabs.forEach(t=>t.addEventListener('click',e=>{e.preventDefault(); go(t.getAttribute('data-tab'));}));
+$('authz-banner-btn').addEventListener('click', ()=>{ go('view-settings'); });
 document.addEventListener('click', e=>{ const g=e.target.closest('[data-go]'); if(g) go(g.getAttribute('data-go')); });
 
 // ── actions ──
@@ -683,6 +695,8 @@ async function poll(){
     $('side-avatar').textContent = initial(d.me);
     $('set-handle').value = '@'+(d.me||'?');
     $('set-org').value = d.org||'';
+    // Not-authorized banner: show when this machine can't answer (no token).
+    $('authz-banner').classList.toggle('hidden', d.claude_authorized !== false);
     renderOverview(d); renderConnections(d); renderSessions(d);
   }catch(e){
     $('conn-dot').className='w-1.5 h-1.5 rounded-full bg-red-500';
@@ -994,6 +1008,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 snap["org"] = self.org
                 snap["daemon"] = _daemon_status()
                 snap["signed_in"] = True
+                from .auth import read_claude_token
+                snap["claude_authorized"] = read_claude_token() is not None
                 self._send_json(200, snap)
                 return
             if path == "/update/status":
