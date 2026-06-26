@@ -97,6 +97,26 @@ CREATE TABLE IF NOT EXISTS knowledge (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_org
     ON knowledge (workspace_org);
+
+-- Federated live queries: store-and-forward request/response so an asker can
+-- query a teammate's live Claude session WITHOUT the teammate's raw transcript
+-- ever leaving their machine. Only the question + answer transit here; the
+-- target's daemon answers locally and posts back just the answer.
+CREATE TABLE IF NOT EXISTS queries (
+    id             TEXT PRIMARY KEY,
+    workspace_org  TEXT NOT NULL,
+    asker_handle   TEXT NOT NULL,
+    target_handle  TEXT NOT NULL,
+    question       TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK(status IN ('pending','answered','failed')),
+    answer         TEXT,
+    citation       TEXT,
+    created_at     REAL NOT NULL,
+    answered_at    REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_queries_target
+    ON queries (workspace_org, target_handle, status);
 """
 
 
@@ -146,6 +166,75 @@ async def get_org_knowledge(workspace_org: str) -> list[dict]:
         {"engineer_handle": r[0], "content": r[1], "updated_at": r[2]}
         for r in rows
     ]
+
+
+# ─── Federated queries (live ask, store-and-forward) ───────────────────────
+
+async def create_query(workspace_org: str, asker: str, target: str, question: str) -> str:
+    """Enqueue a question for `target` to answer from their live session.
+    Returns the query id."""
+    import secrets
+    qid = secrets.token_hex(12)
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO queries
+               (id, workspace_org, asker_handle, target_handle, question, status, created_at)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
+            (qid, workspace_org, asker, target, question, now),
+        )
+        await db.commit()
+    return qid
+
+
+async def pending_queries_for(workspace_org: str, target: str) -> list[dict]:
+    """Pending queries addressed to `target` (their daemon polls this)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT id, asker_handle, question, created_at
+               FROM queries
+               WHERE workspace_org=? AND target_handle=? AND status='pending'
+               ORDER BY created_at ASC""",
+            (workspace_org, target),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [{"id": r[0], "asker": r[1], "question": r[2], "created_at": r[3]} for r in rows]
+
+
+async def answer_query(workspace_org: str, qid: str, answerer: str,
+                       answer: str, citation: str | None) -> bool:
+    """Post an answer. Only the query's target may answer. Returns True if
+    a pending query was found and updated for this answerer."""
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """UPDATE queries SET status='answered', answer=?, citation=?, answered_at=?
+               WHERE id=? AND workspace_org=? AND target_handle=? AND status='pending'""",
+            (answer, citation, now, qid, workspace_org, answerer),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_query(workspace_org: str, qid: str, requester: str) -> dict | None:
+    """Fetch a query's status/answer. Only the asker or the target may read it."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT asker_handle, target_handle, question, status, answer, citation,
+                      created_at, answered_at
+               FROM queries WHERE id=? AND workspace_org=?""",
+            (qid, workspace_org),
+        ) as cur:
+            r = await cur.fetchone()
+    if r is None:
+        return None
+    if requester not in (r[0], r[1]):
+        return None  # not a party to this query
+    return {
+        "id": qid, "asker": r[0], "target": r[1], "question": r[2],
+        "status": r[3], "answer": r[4], "citation": r[5],
+        "created_at": r[6], "answered_at": r[7],
+    }
 
 
 # ─── Files ─────────────────────────────────────────────────────────────────

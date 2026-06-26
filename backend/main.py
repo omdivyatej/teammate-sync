@@ -177,6 +177,18 @@ class KnowledgeResponse(BaseModel):
     docs: list[KnowledgeDoc]
 
 
+class QueryCreateRequest(BaseModel):
+    org: str
+    target: str
+    question: str
+
+
+class QueryAnswerRequest(BaseModel):
+    org: str
+    answer: str
+    citation: str | None = None
+
+
 # ─── Auth helpers ──────────────────────────────────────────────────────────
 
 GITHUB_USER_CACHE: dict[str, dict] = {}
@@ -427,6 +439,59 @@ async def get_knowledge(
     await require_workspace_member(user, org)
     docs = await storage.get_org_knowledge(org)
     return KnowledgeResponse(docs=[KnowledgeDoc(**d) for d in docs])
+
+
+@app.post("/v1/query")
+async def create_query(
+    req: QueryCreateRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """Asker enqueues a live question for `target`. The target's daemon answers
+    it locally (raw transcript never leaves their machine) and posts back."""
+    await require_workspace_member(user, req.org)
+    if req.target == user["login"]:
+        raise HTTPException(status_code=400, detail="can't query yourself")
+    qid = await storage.create_query(req.org, user["login"], req.target, req.question)
+    return {"ok": True, "query_id": qid}
+
+
+@app.get("/v1/query/pending")
+async def pending_queries(
+    org: str,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """The target's daemon polls this for questions addressed to it."""
+    await require_workspace_member(user, org)
+    return {"queries": await storage.pending_queries_for(org, user["login"])}
+
+
+@app.post("/v1/query/{qid}/answer")
+async def answer_query(
+    qid: str,
+    req: QueryAnswerRequest,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """The target posts its locally-generated answer. Only the addressed
+    target may answer (enforced by matching target_handle == caller)."""
+    await require_workspace_member(user, req.org)
+    ok = await storage.answer_query(req.org, qid, user["login"], req.answer, req.citation)
+    if not ok:
+        raise HTTPException(status_code=404, detail="no pending query for you with that id")
+    return {"ok": True}
+
+
+@app.get("/v1/query/{qid}")
+async def get_query(
+    qid: str,
+    org: str,
+    user: dict = Depends(github_user_from_bearer),
+) -> dict:
+    """Asker polls for the answer. Only the asker or target may read it."""
+    await require_workspace_member(user, org)
+    q = await storage.get_query(org, qid, user["login"])
+    if q is None:
+        raise HTTPException(status_code=404, detail="query not found or not yours")
+    return q
 
 
 @app.post("/v1/files/append")
