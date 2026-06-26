@@ -757,11 +757,28 @@ def cmd_up(args) -> int:
     return 0
 
 
+def _teardown_on_engine_stop() -> None:
+    """Engine stop = everything stops (Docker-style). Clear ALL connections +
+    shares on the backend, so nothing lingers while the engine is off and the
+    other side must /connect again when it's back. Best-effort — never blocks
+    the engine from stopping."""
+    try:
+        from . import share_cli
+        share_cli.cmd_disconnect(None)  # nuclear: revoke all connections + shares
+    except Exception as e:
+        print(f"(teardown on stop: {e})", file=sys.stderr)
+
+
 def cmd_down(args) -> int:
-    """Send TERM to the backgrounded daemon, escalate to KILL if needed."""
+    """Send TERM to the backgrounded daemon, escalate to KILL if needed.
+    Stopping the engine tears down all connections + shares (engine off =
+    everything off)."""
     import os as _os
     import signal as _signal
     import time as _time
+
+    # Engine is stopping → tear down all connections/shares first.
+    _teardown_on_engine_stop()
 
     pid = _read_pid()
     if pid is None:
