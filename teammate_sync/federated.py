@@ -101,66 +101,32 @@ def _pick_session_for(asker: str) -> dict | None:
     return candidates[0]
 
 
-def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tuple[str, str]:
-    """Produce (answer, citation) by forking a /connect-ed session read-only."""
-    sess = _pick_session_for(asker)
-    if not sess:
-        return (f"Not found in shared context — no session is /connect-ed with @{asker} "
-                f"right now.", "")
-
-    sid = sess["session_id"]
-    cwd = sess.get("cwd") or str(Path.home())
-    project_dir = Path(sess["transcript_path"]).parent if sess.get("transcript_path") else None
-
-    # Snapshot existing session files so we can delete the throwaway fork after.
-    before = set(project_dir.glob("*.jsonl")) if project_dir and project_dir.exists() else set()
-
-    env = dict(os.environ)
-    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-    env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
-
-    import time as _time
-    _log("")
-    _log(f"════ Q from @{asker} @ {int(_time.time())} ════")
-    _log(f"  question: {question}")
-    _log(f"  answering from session {sid[:8]} (cwd={cwd})")
-
-    # stream-json + verbose so the FULL trace is visible: every file the model
-    # reads/greps and its final answer. (--verbose is required with stream-json
-    # in print mode.)
+def _build_cmd(claude_binary: str, resume_arg: str, wrapped: str, skip_perms: bool) -> list[str]:
+    """Read-only fork-resume command. `--allowedTools` keeps it Read/Grep/Glob
+    only; per Claude Code docs that allowlist still constrains tools even when
+    `--dangerously-skip-permissions` is set (skip only suppresses prompts for
+    already-allowed tools — it does NOT re-grant Edit/Write/Bash)."""
     cmd = [
-        claude_binary, "-p", "-r", sid, "--fork-session",
+        claude_binary, "-p", "-r", resume_arg, "--fork-session",
         "--output-format", "stream-json", "--verbose",
         "--allowedTools", "Read Grep Glob",
         "--disallowedTools", " ".join(_SECRET_DENY),
         "--strict-mcp-config",
-        _WRAP.format(asker=asker, question=question),
     ]
-    t0 = _time.time()
-    try:
-        res = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=150,
-        )
-    except subprocess.TimeoutExpired:
-        _log("  ✗ timed out (150s)")
-        return ("Timed out generating an answer.", f"session {sid[:8]}")
-    finally:
-        if project_dir and project_dir.exists():
-            for f in set(project_dir.glob("*.jsonl")) - before:
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
+    if skip_perms:
+        # Clears the folder-trust gate that blocks headless resume (no TTY to
+        # answer the "trust this directory?" prompt). Read-only still enforced
+        # by --allowedTools above.
+        cmd.append("--dangerously-skip-permissions")
+    cmd.append(wrapped)
+    return cmd
 
-    if res.returncode != 0:
-        detail = (res.stderr.strip() or res.stdout.strip())[:300]
-        _log(f"  ✗ claude failed rc={res.returncode}: {detail}")
-        return ("Couldn't generate an answer right now.", f"session {sid[:8]}")
 
-    # Parse the stream-json events: log the model's process (reads/greps/text)
-    # and pull the final answer from the terminal 'result' event.
+def _parse_answer(stdout: str) -> str:
+    """Parse stream-json events: log the model's process (reads/greps/text) and
+    return the final answer from the terminal 'result' event."""
     answer = ""
-    for line in res.stdout.splitlines():
+    for line in stdout.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -181,11 +147,85 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tu
                     _log(f"    · {blk.get('name','tool')}: {str(tgt)[:120]}")
         elif etype == "result":
             answer = (ev.get("result") or "").strip()
-    if not answer:
-        # Fallback: maybe plain text slipped through.
-        answer = res.stdout.strip()[:1000] or "Not enough context to answer."
-    _log(f"  ✓ answer ({_time.time()-t0:.1f}s): {answer[:500]}")
-    return (answer, f"session {sid[:8]}")
+    return answer
+
+
+def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tuple[str, str]:
+    """Produce (answer, citation) by forking a /connect-ed session read-only.
+
+    Two attempts. Resume-by-session-id is scoped to the project dir and can be
+    blocked by the headless folder-trust prompt; if it fails, fall back to the
+    unambiguous full-transcript-path form with --dangerously-skip-permissions
+    (still read-only via --allowedTools)."""
+    sess = _pick_session_for(asker)
+    if not sess:
+        return (f"Not found in shared context — no session is /connect-ed with @{asker} "
+                f"right now.", "")
+
+    sid = sess["session_id"]
+    cwd = sess.get("cwd") or str(Path.home())
+    transcript_path = sess.get("transcript_path")
+    project_dir = Path(transcript_path).parent if transcript_path else None
+    citation = f"session {sid[:8]}"
+
+    # Snapshot existing session files so we can delete the throwaway fork after.
+    before = set(project_dir.glob("*.jsonl")) if project_dir and project_dir.exists() else set()
+
+    env = dict(os.environ)
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+
+    import time as _time
+    _log("")
+    _log(f"════ Q from @{asker} @ {int(_time.time())} ════")
+    _log(f"  question: {question}")
+    _log(f"  answering from session {sid[:8]} (cwd={cwd})")
+
+    wrapped = _WRAP.format(asker=asker, question=question)
+
+    # Attempt order: (label, resume arg, skip_perms). The fallback uses the full
+    # path + skip-permissions — the form observed to resume reliably.
+    attempts = [("session-id", sid, False)]
+    if transcript_path:
+        attempts.append(("transcript-path", transcript_path, True))
+
+    answer = ""
+    try:
+        for label, resume_arg, skip_perms in attempts:
+            _log(f"  → attempt [{label}] skip_perms={skip_perms}")
+            t0 = _time.time()
+            cmd = _build_cmd(claude_binary, resume_arg, wrapped, skip_perms)
+            try:
+                res = subprocess.run(
+                    cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=150,
+                )
+            except subprocess.TimeoutExpired:
+                _log(f"    ✗ [{label}] timed out (150s)")
+                continue
+            if res.returncode != 0:
+                detail = (res.stderr.strip() or res.stdout.strip())[:300]
+                _log(f"    ✗ [{label}] claude failed rc={res.returncode}: {detail}")
+                continue
+            answer = _parse_answer(res.stdout)
+            if answer:
+                _log(f"  ✓ answer via [{label}] ({_time.time()-t0:.1f}s): {answer[:500]}")
+                return (answer, citation)
+            # rc==0 but no parsed result — maybe plain text slipped through.
+            answer = res.stdout.strip()[:1000]
+            if answer:
+                _log(f"  ✓ answer via [{label}] (raw, {_time.time()-t0:.1f}s): {answer[:500]}")
+                return (answer, citation)
+            _log(f"    · [{label}] produced no answer; trying fallback")
+    finally:
+        if project_dir and project_dir.exists():
+            for f in set(project_dir.glob("*.jsonl")) - before:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+    _log("  ✗ all attempts exhausted")
+    return ("Couldn't generate an answer right now.", citation)
 
 
 def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_getter) -> None:
