@@ -101,6 +101,30 @@ def _pick_session_for(asker: str) -> dict | None:
     return candidates[0]
 
 
+def _session_cwd(transcript_path: str | None) -> str | None:
+    """The directory the session was actually started in, read straight from the
+    transcript JSONL (each entry records a "cwd"). This is ground truth — more
+    reliable than the active-sessions registry and avoids decoding the dashed
+    project-dir name (ambiguous: gmr-qc vs gmr/qc)."""
+    if not transcript_path:
+        return None
+    try:
+        with open(transcript_path) as fh:
+            for _ in range(30):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(o, dict) and o.get("cwd"):
+                    return o["cwd"]
+    except OSError:
+        pass
+    return None
+
+
 def _build_cmd(claude_binary: str, resume_arg: str, wrapped: str, skip_perms: bool) -> list[str]:
     """Read-only fork-resume command. `--allowedTools` keeps it Read/Grep/Glob
     only; per Claude Code docs that allowlist still constrains tools even when
@@ -163,8 +187,9 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tu
                 f"right now.", "")
 
     sid = sess["session_id"]
-    cwd = sess.get("cwd") or str(Path.home())
     transcript_path = sess.get("transcript_path")
+    # Real launch dir from the transcript itself; fall back to the registry cwd.
+    cwd = _session_cwd(transcript_path) or sess.get("cwd") or str(Path.home())
     project_dir = Path(transcript_path).parent if transcript_path else None
     citation = f"session {sid[:8]}"
 
@@ -183,24 +208,31 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tu
 
     wrapped = _WRAP.format(asker=asker, question=question)
 
-    # Attempt order: (label, resume arg, skip_perms). The fallback uses the full
-    # path + skip-permissions — the form observed to resume reliably.
+    # Escalating attempts: (label, resume arg, skip_perms). skip-perms is the
+    # genuine last resort. id-resume is the documented form but fails for the
+    # currently-live/locked session; path-resume opens the transcript directly
+    # and works where id-lookup misses. Try the cheap/safe forms first.
     attempts = [("session-id", sid, False)]
     if transcript_path:
+        attempts.append(("transcript-path", transcript_path, False))
         attempts.append(("transcript-path", transcript_path, True))
 
     answer = ""
     try:
-        for label, resume_arg, skip_perms in attempts:
-            _log(f"  → attempt [{label}] skip_perms={skip_perms}")
+        for idx, (label, resume_arg, skip_perms) in enumerate(attempts):
+            is_last = idx == len(attempts) - 1
+            # Non-final attempts get a tighter cap so a folder-trust hang bails
+            # quickly to the skip-perms last resort instead of eating 150s.
+            to = 150 if is_last else 60
+            _log(f"  → attempt [{label}] skip_perms={skip_perms} timeout={to}s")
             t0 = _time.time()
             cmd = _build_cmd(claude_binary, resume_arg, wrapped, skip_perms)
             try:
                 res = subprocess.run(
-                    cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=150,
+                    cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=to,
                 )
             except subprocess.TimeoutExpired:
-                _log(f"    ✗ [{label}] timed out (150s)")
+                _log(f"    ✗ [{label}] timed out ({to}s)")
                 continue
             if res.returncode != 0:
                 detail = (res.stderr.strip() or res.stdout.strip())[:300]
