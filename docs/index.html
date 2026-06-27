@@ -624,8 +624,8 @@
                         </div>
                         <div class="terminal-body">
                             <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">om-divyatej</span></div>
-                            <div class="t-output">Waiting for Om to establish trust...</div>
-                            <div class="t-output t-highlight">Trust established. Session context syncing (backgrounded).</div>
+                            <div class="t-output">Request sent — waiting for Om to /connect back...</div>
+                            <div class="t-output t-highlight">Connected. Om can ask your shared sessions — nothing syncs, your Claude answers locally.</div>
                             <div class="t-row mt-4"><span class="t-prompt">❯</span><span class="t-cmd">Claude, rewrite the auth middleware...</span></div>
                         </div>
                     </div>
@@ -637,12 +637,11 @@
                         </div>
                         <div class="terminal-body">
                             <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">saketh</span></div>
-                            <div class="t-output t-highlight">Connected. Saketh's session is live.</div>
+                            <div class="t-output t-highlight">Connected with saketh. You can /ask their shared sessions.</div>
                             <div class="t-row" style="margin-top: 1rem;"><span class="t-prompt">❯</span><span class="t-cmd">/ask</span> <span class="t-arg">saketh what library did you pick for pagination?</span></div>
                             <div class="t-output" style="color: #fff;">
-                                Based on Saketh's current session, he decided to use <span class="t-highlight">cursor-based pagination</span>.<br><br>
-                                Reasoning cited: "Need cursor-based to handle high volume writes on the feed table."<br>
-                                <span class="t-cite">↳ from saketh's live session • 14s ago</span>
+                                He went with <span class="t-highlight">cursor-based pagination</span> — "needed it to handle high-volume writes on the feed table."<br><br>
+                                <span class="t-cite">— @saketh, live (feed-service)</span>
                             </div>
                         </div>
                     </div>
@@ -713,7 +712,7 @@
                             Saketh is currently dealing with a recursive update on the <span class="t-highlight">AccountTrigger</span>.<br><br>
                             His Claude instance just generated this SOQL query to bypass it:<br>
                             <span style="color: #a855f7;">SELECT Id FROM Account WHERE LastModifiedDate &lt; :Trigger.new[0].LastModifiedDate</span><br><br>
-                            <span style="color: var(--text-secondary);">↳ Cited: saketh's live session, last message 94s ago. Not in GitHub.</span>
+                            <span style="color: var(--text-secondary);">— @saketh, live (sf-migration) · answered 94s ago. Never hit GitHub.</span>
                         </div>
                     </div>
                 </div>
@@ -790,21 +789,21 @@
                         <div class="step-number">2</div>
                         <div class="step-content">
                             <h3 style="color: #fff;">Start Daemon</h3>
-                            <p style="font-size: 0.875rem;">Runs silently in the background tracking your Claude Code session data.</p>
+                            <p style="font-size: 0.875rem;">Runs silently in the background. Your sessions never leave your machine — nothing is uploaded.</p>
                         </div>
                     </div>
                     <div class="step-item">
                         <div class="step-number">3</div>
                         <div class="step-content">
                             <h3 style="color: #fff;">Connect Teammate</h3>
-                            <p style="font-size: 0.875rem;">Type <code>/connect saketh</code>. Trust links are established, session content flows securely.</p>
+                            <p style="font-size: 0.875rem;">Type <code>/connect saketh</code> — you both confirm once. No content syncs; it just unlocks asking each other.</p>
                         </div>
                     </div>
                     <div class="step-item">
                         <div class="step-number">4</div>
                         <div class="step-content">
                             <h3 style="color: #fff;">Query Context</h3>
-                            <p style="font-size: 0.875rem;">Type <code>/ask om what did you decide?</code> to get cited answers based on live sessions.</p>
+                            <p style="font-size: 0.875rem;">Type <code>/ask om &lt;question&gt;</code>, pick which shared session to ask, and their Claude answers — you get just the answer, cited.</p>
                         </div>
                     </div>
                 </div>
