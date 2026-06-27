@@ -181,6 +181,8 @@ class QueryCreateRequest(BaseModel):
     org: str
     target: str
     question: str
+    kind: str = "answer"
+    session_id: str | None = None
 
 
 class QueryAnswerRequest(BaseModel):
@@ -460,7 +462,9 @@ async def create_query(
             detail=(f"Not connected to {req.target}. Run /connect {req.target} first "
                     f"(and they must /connect you back) before you can /ask them."),
         )
-    qid = await storage.create_query(req.org, user["login"], req.target, req.question)
+    kind = req.kind if req.kind in ("answer", "list") else "answer"
+    qid = await storage.create_query(req.org, user["login"], req.target, req.question,
+                                     kind=kind, session_id=req.session_id)
     return {"ok": True, "query_id": qid}
 
 

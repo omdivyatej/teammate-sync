@@ -69,36 +69,94 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
-def _pick_session_for(asker: str) -> dict | None:
-    """Pick which session to answer `asker` from — STRICTLY one the engineer
-    explicitly /connect-ed with THIS asker. Never any other session.
-
-    Consent rule: a session is answerable only if /connect was run in it for
-    this person (it's in .shared-sessions.json with `asker` as a recipient).
-    Among those, pick the most-recently-active. A session the engineer never
-    /connect-ed (e.g. a personal project) is NEVER reachable, even if it's the
-    one they're currently typing in. Returns {session_id, cwd, transcript_path}
-    or None."""
+def _connected_active(asker: str) -> list[dict]:
+    """Raw active-session dicts the engineer explicitly /connect-ed with THIS
+    asker, newest-active first. This is the consent boundary: a session the
+    engineer never /connect-ed (e.g. a personal project) is NEVER in this list,
+    even if it's the one they're currently typing in. Nothing else is reachable."""
     from .backend import SHARED_SESSIONS_FILENAME
     shared = _read_json(_state_dir() / SHARED_SESSIONS_FILENAME).get("sessions", [])
-    # session_ids explicitly /connect-ed with this asker
     connected_ids = {
         s["session_id"] for s in shared
         if isinstance(s, dict) and asker in (s.get("recipients") or [])
     }
     if not connected_ids:
-        return None
-
+        return []
     active = _read_json(_state_dir() / ACTIVE_SESSIONS_FILENAME).get("sessions", [])
-    # Only connected AND currently-active sessions are forkable; pick newest.
     candidates = [
         s for s in active
         if isinstance(s, dict) and s.get("session_id") in connected_ids
     ]
-    if not candidates:
-        return None
     candidates.sort(key=lambda s: s.get("last_activity_epoch") or 0, reverse=True)
-    return candidates[0]
+    return candidates
+
+
+def _pick_session_for(asker: str) -> dict | None:
+    """The most-recently-active /connect-ed session, or None. Used only as the
+    no-session-specified fallback; the picker passes an explicit session_id."""
+    c = _connected_active(asker)
+    return c[0] if c else None
+
+
+def _git_label(cwd: str) -> str:
+    """Human label for a session: the git repo root's name (so a deep cwd like
+    .../gmr-qc/codebase shows as 'gmr-qc', not 'codebase'), else the dir name."""
+    if cwd:
+        try:
+            r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                return Path(r.stdout.strip()).name
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return Path(cwd).name
+    return "session"
+
+
+def _last_human_turn(transcript_path: str | None) -> str:
+    """A one-line recognition hint: the last thing the user typed in the session.
+    Read locally from the transcript tail; never leaves the machine beyond this
+    short snippet, and only for /connect-ed sessions."""
+    if not transcript_path:
+        return ""
+    last = ""
+    try:
+        with open(transcript_path) as fh:
+            for line in fh:
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(o, dict) or o.get("type") != "user":
+                    continue
+                content = (o.get("message") or {}).get("content")
+                if isinstance(content, str) and content.strip():
+                    last = content.strip()
+                elif isinstance(content, list):
+                    for blk in content:
+                        # plain user text only — skip tool_result blocks
+                        if isinstance(blk, dict) and blk.get("type") == "text" and blk.get("text", "").strip():
+                            last = blk["text"].strip()
+    except OSError:
+        return ""
+    last = " ".join(last.split())  # collapse whitespace/newlines
+    return last[:80]
+
+
+def _list_sessions_for(asker: str) -> list[dict]:
+    """The picker payload: every /connect-ed, currently-active session, labeled
+    by git repo + last-activity + a one-line hint. No forking, no Claude call —
+    just local registry + transcript-tail reads."""
+    out = []
+    for s in _connected_active(asker):
+        cwd = _session_cwd(s.get("transcript_path")) or s.get("cwd") or ""
+        out.append({
+            "session_id": s["session_id"],
+            "label": _git_label(cwd),
+            "last_activity_epoch": s.get("last_activity_epoch") or 0,
+            "hint": _last_human_turn(s.get("transcript_path")),
+        })
+    return out
 
 
 def _session_cwd(transcript_path: str | None) -> str | None:
@@ -174,24 +232,37 @@ def _parse_answer(stdout: str) -> str:
     return answer
 
 
-def _answer_one(question: str, asker: str, claude_binary: str, token: str) -> tuple[str, str]:
+def _answer_one(question: str, asker: str, claude_binary: str, token: str,
+                session_id: str | None = None) -> tuple[str, str]:
     """Produce (answer, citation) by forking a /connect-ed session read-only.
+
+    If `session_id` is given (the asker picked it), answer from THAT session —
+    but only after confirming it's one /connect-ed with this asker (consent
+    enforced via _connected_active). Otherwise fall back to the most-recent
+    connected session.
 
     Two attempts. Resume-by-session-id is scoped to the project dir and can be
     blocked by the headless folder-trust prompt; if it fails, fall back to the
     unambiguous full-transcript-path form with --dangerously-skip-permissions
     (still read-only via --allowedTools)."""
-    sess = _pick_session_for(asker)
-    if not sess:
-        return (f"Not found in shared context — no session is /connect-ed with @{asker} "
-                f"right now.", "")
+    if session_id:
+        sess = next((s for s in _connected_active(asker)
+                     if s.get("session_id") == session_id), None)
+        if not sess:
+            return ("That session isn't shared with you, or is no longer open.", "")
+    else:
+        sess = _pick_session_for(asker)
+        if not sess:
+            return (f"Not found in shared context — no session is /connect-ed with @{asker} "
+                    f"right now.", "")
 
     sid = sess["session_id"]
     transcript_path = sess.get("transcript_path")
     # Real launch dir from the transcript itself; fall back to the registry cwd.
     cwd = _session_cwd(transcript_path) or sess.get("cwd") or str(Path.home())
     project_dir = Path(transcript_path).parent if transcript_path else None
-    citation = f"session {sid[:8]}"
+    label = _git_label(cwd)
+    citation = label
 
     # Snapshot existing session files so we can delete the throwaway fork after.
     before = set(project_dir.glob("*.jsonl")) if project_dir and project_dir.exists() else set()
@@ -280,7 +351,17 @@ def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_gett
 
     for q in pending:
         qid, asker, question = q["id"], q.get("asker", "a teammate"), q["question"]
-        if not token:
+        kind = q.get("kind") or "answer"
+        if kind == "list":
+            # No fork, no Claude, no token needed — just the consent-filtered
+            # session list (labels + hints) for the asker's picker.
+            sessions = _list_sessions_for(asker)
+            answer, citation = json.dumps({"sessions": sessions}), "list"
+            _log("")
+            _log(f"════ LIST req from @{asker} @ {int(__import__('time').time())} ════")
+            _log(f"  returning {len(sessions)} shared session(s): "
+                 f"{', '.join(s['label'] for s in sessions) or '(none)'}")
+        elif not token:
             answer, citation = (
                 "Decision capture / live answering isn't authorized on this "
                 "teammate's machine yet.", "")
@@ -290,7 +371,8 @@ def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_gett
             except Exception:
                 answer, citation = ("Claude CLI not available to answer.", "")
             else:
-                answer, citation = _answer_one(question, asker, claude_binary, token)
+                answer, citation = _answer_one(question, asker, claude_binary, token,
+                                               session_id=q.get("session_id"))
         try:
             from .auth import read_auth
             auth = read_auth()

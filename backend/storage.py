@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS queries (
     answer         TEXT,
     citation       TEXT,
     created_at     REAL NOT NULL,
-    answered_at    REAL
+    answered_at    REAL,
+    kind           TEXT NOT NULL DEFAULT 'answer',
+    session_id     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_queries_target
@@ -126,6 +128,12 @@ async def init_db() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(_SCHEMA)
+        # Migrations for DBs created before kind/session_id existed.
+        for ddl in ("kind TEXT NOT NULL DEFAULT 'answer'", "session_id TEXT"):
+            try:
+                await db.execute(f"ALTER TABLE queries ADD COLUMN {ddl}")
+            except Exception:
+                pass  # column already present
         await db.commit()
 
 
@@ -170,18 +178,21 @@ async def get_org_knowledge(workspace_org: str) -> list[dict]:
 
 # ─── Federated queries (live ask, store-and-forward) ───────────────────────
 
-async def create_query(workspace_org: str, asker: str, target: str, question: str) -> str:
-    """Enqueue a question for `target` to answer from their live session.
-    Returns the query id."""
+async def create_query(workspace_org: str, asker: str, target: str, question: str,
+                       kind: str = "answer", session_id: str | None = None) -> str:
+    """Enqueue a request for `target`. kind='answer' (default) is a question to
+    answer from a session; kind='list' asks the target's daemon to return the
+    set of sessions it shares with `asker`. Returns the query id."""
     import secrets
     qid = secrets.token_hex(12)
     now = time.time()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """INSERT INTO queries
-               (id, workspace_org, asker_handle, target_handle, question, status, created_at)
-               VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-            (qid, workspace_org, asker, target, question, now),
+               (id, workspace_org, asker_handle, target_handle, question, status,
+                created_at, kind, session_id)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
+            (qid, workspace_org, asker, target, question, now, kind, session_id),
         )
         await db.commit()
     return qid
@@ -191,14 +202,15 @@ async def pending_queries_for(workspace_org: str, target: str) -> list[dict]:
     """Pending queries addressed to `target` (their daemon polls this)."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            """SELECT id, asker_handle, question, created_at
+            """SELECT id, asker_handle, question, created_at, kind, session_id
                FROM queries
                WHERE workspace_org=? AND target_handle=? AND status='pending'
                ORDER BY created_at ASC""",
             (workspace_org, target),
         ) as cur:
             rows = await cur.fetchall()
-    return [{"id": r[0], "asker": r[1], "question": r[2], "created_at": r[3]} for r in rows]
+    return [{"id": r[0], "asker": r[1], "question": r[2], "created_at": r[3],
+             "kind": r[4], "session_id": r[5]} for r in rows]
 
 
 async def answer_query(workspace_org: str, qid: str, answerer: str,

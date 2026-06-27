@@ -374,25 +374,37 @@ _RETIRED_SLASH_COMMANDS = {
 
 
 _ASK_SLASH_MD = """---
-description: Ask a teammate's LIVE Claude session a question — their Claude answers from their real session; you get just the answer.
-argument-hint: "<handle-or-alias> <question>"
+description: Ask a teammate's LIVE Claude session a question — pick which of their shared sessions to ask; you get just the answer.
+argument-hint: "<handle-or-alias> [--pick] <question>"
 ---
 
 The user wants to ask ONE teammate a live question. Parse the argument:
   - first whitespace-separated token = the teammate's handle or local alias
-  - everything after = the question text
+  - if the token `--pick` appears anywhere, set pick=true and remove it
+  - everything else = the question text
 
-Call the MCP tool `mcp__teammate-sync__ask_teammate_live` with
-`teammate` = that handle/alias (pass it as-is; the tool resolves aliases) and
-`question` = the rest. The teammate's OWN Claude answers it from their live
-session on their machine — their raw transcript never leaves their device; you
-receive only the answer. This can take a few seconds to tens of seconds.
+Call the MCP tool `mcp__teammate-sync__ask_teammate` with `teammate` = that
+handle/alias (pass as-is; the tool resolves aliases), `question` = the rest,
+and `pick` = true only if `--pick` was given.
 
-Then present the returned text to the user as-is — it is ALREADY the answer,
-not raw context to reason over. Do not add preamble or restate the question.
-  - If the tool notes the teammate was offline and shows their recorded
-    decisions, present those and make clear they're recorded, not live.
-  - If it says exactly 'Not found in shared context.', say exactly that.
+Then handle the result:
+
+1. If it starts with `PICK_REQUIRED`: the teammate has several shared sessions.
+   Show the user ONLY the numbered list from the payload (never the session_id
+   map) and ask which number. When they reply, call
+   `mcp__teammate-sync__ask_teammate_session` with the same `teammate`, the
+   original `question`, and the `session_id` + `label` for their chosen number
+   from the payload's map. Present that answer as-is.
+
+2. Otherwise it is ALREADY the answer — present it as-is. No preamble, no
+   restating the question. If it shows recorded decisions (offline fallback),
+   make clear they're recorded, not live. If it says exactly
+   'Not found in shared context.', say exactly that.
+
+3. If the answer ends with a tip about replying "default", and the user then
+   says "default" (or asks to remember this session), call
+   `mcp__teammate-sync__set_ask_default` with `teammate` and the `label` of the
+   session that just answered. Confirm with the tool's returned message.
 
 The user's argument is: $ARGUMENTS
 """

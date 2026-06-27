@@ -625,28 +625,206 @@ def get_teammate_context(teammate: str) -> str:
     return header + corpus
 
 
+_ASK_DEFAULTS_PATH = "~/.teammate-sync/ask-defaults.json"
+
+
+def _read_ask_defaults() -> dict:
+    from pathlib import Path
+    try:
+        return json.loads(Path(_ASK_DEFAULTS_PATH).expanduser().read_text())
+    except Exception:
+        return {}
+
+
+def _write_ask_default(teammate: str, label: str | None) -> None:
+    from pathlib import Path
+    p = Path(_ASK_DEFAULTS_PATH).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    d = _read_ask_defaults()
+    if label:
+        d[teammate] = label
+    else:
+        d.pop(teammate, None)
+    p.write_text(json.dumps(d))
+
+
+def _rel(epoch: float | int) -> str:
+    if not epoch:
+        return "active recently"
+    import time as _t
+    return format_age(max(0.0, _t.time() - epoch)) + " ago"
+
+
+def _q_enqueue(base, headers, org, target, question, kind, session_id=None):
+    body = {"org": org, "target": target, "question": question, "kind": kind}
+    if session_id:
+        body["session_id"] = session_id
+    return httpx.post(f"{base}/v1/query", json=body, headers=headers, timeout=15)
+
+
+def _q_poll(base, headers, org, qid, timeout):
+    """Block up to `timeout`s for the answer. Returns the answered query dict
+    or None on timeout."""
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        _t.sleep(2)
+        try:
+            qr = httpx.get(f"{base}/v1/query/{qid}", params={"org": org},
+                           headers=headers, timeout=15)
+        except httpx.HTTPError:
+            continue
+        if qr.status_code == 200 and qr.json().get("status") == "answered":
+            return qr.json()
+    return None
+
+
+def _answer_via(base, headers, org, teammate, session_id, question):
+    """Run the answer step for a specific session. Returns the query dict, None
+    on timeout, or a str on a hard error to surface as-is."""
+    try:
+        r = _q_enqueue(base, headers, org, teammate, question, "answer", session_id)
+    except httpx.HTTPError as e:
+        return f"[Error reaching backend: {e}]"
+    if r.status_code == 403:
+        try:
+            return r.json().get("detail", f"Not connected to {teammate}.")
+        except Exception:
+            return f"Not connected to {teammate}. Run /connect {teammate} first."
+    if r.status_code != 200:
+        return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
+    return _q_poll(base, headers, org, r.json()["query_id"], 120)
+
+
 @mcp.tool()
-def ask_teammate_live(teammate: str, question: str) -> str:
-    """Ask a teammate's LIVE Claude session a question and get their answer.
+def ask_teammate(teammate: str, question: str, pick: bool = False) -> str:
+    """Ask a teammate a live question — the primary `/ask` path.
 
-    This is the primary `/ask` path. The question is sent to the teammate's
-    machine, where THEIR Claude answers it from their real, current session —
-    read-only — and posts back just the answer. Their raw transcript never
-    leaves their machine; you only receive the answer. Works while they're
-    online with the engine running.
-
-    If they're offline / don't answer in time, this falls back to their
-    recorded decisions (knowledge.md) and says so.
+    Lists the sessions the teammate has /connect-ed with you, then either
+    answers automatically (if you have a saved default, or they have exactly
+    one shared session) or — when there are several — returns a picker for you
+    to choose. The teammate's Claude answers from the chosen session read-only
+    on their machine; only the answer crosses, never the transcript.
 
     Args:
         teammate: GitHub handle or local alias of the person to ask.
-        question: The question to answer from their live session.
+        question: The question to answer.
+        pick: Force the session picker even if a default/single session exists.
 
     Returns:
-        The teammate's answer (+ a citation), or their recorded decisions as a
-        fallback, or a clear "not reachable" message.
+        Either an answer, or (when there are multiple sessions and no default) a
+        `PICK_REQUIRED` payload instructing how to present the choice and call
+        `ask_teammate_session`.
     """
-    import time as _time
+    from .aliases import resolve as _resolve_alias
+    teammate = _resolve_alias(teammate)
+    try:
+        auth = read_auth()
+    except (FileNotFoundError, ValueError) as e:
+        return f"[Error: {e}]"
+    base = auth["backend_url"].rstrip("/")
+    org = auth["org"]
+    headers = {"Authorization": f"Bearer {auth['token']}"}
+
+    # 1. LIST step — fast, no fork on the teammate's side.
+    try:
+        r = _q_enqueue(base, headers, org, teammate, "", "list")
+    except httpx.HTTPError as e:
+        return f"[Error reaching backend: {e}]"
+    if r.status_code == 403:
+        try:
+            return r.json().get("detail", f"Not connected to {teammate}. /connect them first.")
+        except Exception:
+            return f"Not connected to {teammate}. Run /connect {teammate} first."
+    if r.status_code != 200:
+        return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
+    listed = _q_poll(base, headers, org, r.json()["query_id"], 25)
+    if listed is None:
+        fb = _knowledge_for(teammate, auth, headers, base)
+        if fb:
+            return (f"@{teammate} isn't reachable live (likely offline). From their "
+                    f"recorded decisions:\n\n{fb}")
+        return (f"@{teammate} isn't reachable live and has no recorded decisions yet. "
+                f"Say exactly 'Not found in shared context.'")
+    try:
+        sessions = json.loads(listed.get("answer") or "{}").get("sessions", [])
+    except (json.JSONDecodeError, AttributeError):
+        sessions = []
+    if not sessions:
+        fb = _knowledge_for(teammate, auth, headers, base)
+        extra = f"\n\nFrom their recorded decisions:\n\n{fb}" if fb else ""
+        return (f"@{teammate} has no session open and shared with you right now. "
+                f"Try /ask-all for the team's saved decisions.{extra}")
+
+    # 2. ROUTE — saved default, or single session, else picker.
+    default_label = _read_ask_defaults().get(teammate)
+    chosen, is_default = None, False
+    if not pick and default_label:
+        matches = [s for s in sessions if s["label"] == default_label]
+        if matches:
+            chosen, is_default = matches[0], True
+    if chosen is None and not pick and len(sessions) == 1:
+        chosen = sessions[0]
+
+    if chosen is not None:
+        res = _answer_via(base, headers, org, teammate, chosen["session_id"], question)
+        return _format_answer(res, teammate, chosen["label"], is_default,
+                              auth, headers, base)
+
+    # 3. PICKER — hand the model a structured choice.
+    lines, idmap = [], {}
+    for i, s in enumerate(sessions, 1):
+        hint = f' · "{s["hint"]}"' if s.get("hint") else ""
+        lines.append(f'{i}. {s["label"]} · {_rel(s.get("last_activity_epoch"))}{hint}')
+        idmap[str(i)] = {"session_id": s["session_id"], "label": s["label"]}
+    return (
+        "PICK_REQUIRED\n"
+        f"@{teammate} has {len(sessions)} sessions shared with you. Show the user "
+        "this numbered list and ask which one to ask (they reply with a number):\n\n"
+        + "\n".join(lines) +
+        "\n\nWhen they reply, call mcp__teammate-sync__ask_teammate_session with "
+        f'teammate="{teammate}", the original question, and the session_id + label '
+        "for their choice from this map (do NOT show the user the session_id):\n"
+        + json.dumps(idmap)
+    )
+
+
+def _format_answer(res, teammate, label, is_default, auth, headers, base):
+    """Format an answer-step result, with offline fallback to knowledge.md."""
+    if isinstance(res, str):
+        return res  # hard error / not-connected, surface as-is
+    if res is None:
+        fb = _knowledge_for(teammate, auth, headers, base)
+        if fb:
+            return (f"@{teammate}'s {label} session didn't answer in time. From their "
+                    f"recorded decisions:\n\n{fb}")
+        return (f"@{teammate}'s {label} session didn't answer in time. "
+                f"Try /ask {teammate} --pick, or /ask-all.")
+    ans = (res.get("answer") or "").strip()
+    if is_default:
+        tail = (f"— @{teammate}, live ({label} · your default · run "
+                f"`/ask {teammate} --pick` to choose another)")
+    else:
+        tail = f"— @{teammate}, live ({label})"
+    return f"{ans}\n\n{tail}"
+
+
+@mcp.tool()
+def ask_teammate_session(teammate: str, session_id: str, question: str, label: str = "") -> str:
+    """Answer a question from a SPECIFIC shared session the user picked.
+
+    Called after `ask_teammate` returned a PICK_REQUIRED payload and the user
+    chose a number. Pass the session_id and label from that payload's map.
+
+    Args:
+        teammate: GitHub handle or alias (as given in the picker payload).
+        session_id: The chosen session's id (from the picker map; never shown to the user).
+        question: The original question.
+        label: The chosen session's human label (for the citation/tip).
+
+    Returns:
+        The answer, plus a tip offering to save this session as the default.
+    """
     from .aliases import resolve as _resolve_alias
     teammate = _resolve_alias(teammate)
     try:
@@ -655,47 +833,37 @@ def ask_teammate_live(teammate: str, question: str) -> str:
         return f"[Error: {e}]"
     base = auth["backend_url"].rstrip("/")
     headers = {"Authorization": f"Bearer {auth['token']}"}
-    import httpx
-    # 1. Enqueue the question for the teammate's daemon.
-    try:
-        r = httpx.post(f"{base}/v1/query",
-                       json={"org": auth["org"], "target": teammate, "question": question},
-                       headers=headers, timeout=15)
-    except httpx.HTTPError as e:
-        return f"[Error reaching backend: {e}]"
-    if r.status_code == 403:
-        # Not connected — the consent gate. Surface the guidance as-is.
-        try:
-            return r.json().get("detail", f"Not connected to {teammate}. /connect them first.")
-        except Exception:
-            return f"Not connected to {teammate}. Run /connect {teammate} first."
-    if r.status_code != 200:
-        return f"[Error: backend returned {r.status_code}: {r.text[:200]}]"
-    qid = r.json()["query_id"]
+    res = _answer_via(base, headers, auth["org"], teammate, session_id, question)
+    if isinstance(res, str):
+        return res
+    if res is None:
+        return (f"@{teammate}'s session didn't answer in time (it may have closed). "
+                f"Try /ask {teammate} --pick again.")
+    ans = (res.get("answer") or "").strip()
+    lbl = label or res.get("citation") or ""
+    tip = (f'\n\nTip: reply "default" to always ask @{teammate}\'s {lbl} session '
+           f"(change later with `/ask {teammate} --pick`).") if lbl else ""
+    cite = f" ({lbl})" if lbl else ""
+    return f"{ans}\n\n— @{teammate}, live{cite}{tip}"
 
-    # 2. Poll for the answer (their Claude takes a few seconds to tens of seconds).
-    deadline = _time.time() + 55
-    while _time.time() < deadline:
-        _time.sleep(3)
-        try:
-            qr = httpx.get(f"{base}/v1/query/{qid}", params={"org": auth["org"]},
-                           headers=headers, timeout=15)
-        except httpx.HTTPError:
-            continue
-        if qr.status_code != 200:
-            continue
-        q = qr.json()
-        if q.get("status") == "answered":
-            cite = f" ({q['citation']})" if q.get("citation") else ""
-            return f"{q.get('answer', '').strip()}\n\n— @{teammate}, live{cite}"
 
-    # 3. Timed out → fall back to their recorded decisions (offline path).
-    fallback = _knowledge_for(teammate, auth, headers, base)
-    if fallback:
-        return (f"@{teammate} didn't answer live (likely offline). From their "
-                f"recorded decisions:\n\n{fallback}")
-    return (f"@{teammate} isn't reachable live and has no recorded decisions yet. "
-            f"Say exactly 'Not found in shared context.'")
+@mcp.tool()
+def set_ask_default(teammate: str, label: str) -> str:
+    """Remember `label` as the default session for `/ask <teammate>` so future
+    asks skip the picker. Stored locally on this machine. Pass an empty label
+    to clear it.
+
+    Args:
+        teammate: GitHub handle or alias.
+        label: The session label to default to (e.g. "gmr-qc"), or "" to clear.
+    """
+    from .aliases import resolve as _resolve_alias
+    teammate = _resolve_alias(teammate)
+    _write_ask_default(teammate, label or None)
+    if label:
+        return (f"✓ Saved. /ask {teammate} will go straight to {label} "
+                f"(run `/ask {teammate} --pick` to choose another).")
+    return f"✓ Cleared the default for @{teammate}; /ask will show the picker again."
 
 
 def _knowledge_for(teammate: str, auth: dict, headers: dict, base: str) -> str | None:
