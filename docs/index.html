@@ -617,16 +617,17 @@
             </div>
 
             <div class="hero-visual">
+                <div class="mono" style="margin-bottom: 1.5rem; padding: 0.5rem 1rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: var(--radius-pill); font-size: 0.8rem; color: var(--text-primary); text-align: center;"><span style="color: var(--accent); font-weight: 600;">Sam</span> &amp; <span style="color: var(--accent); font-weight: 600;">Dario</span> — teammates in the same org, on the same project</div>
                 <div class="terminal-stack">
                     <div class="terminal mono">
                         <div class="terminal-header">
                             <div class="mac-dots"><div class="r"></div><div class="y"></div><div class="g"></div></div>
-                            <div class="terminal-title mono" style="font-size: 0.75rem">marcus — claude-code</div>
+                            <div class="terminal-title mono" style="font-size: 0.75rem">dario — claude-code</div>
                         </div>
                         <div class="terminal-body">
-                            <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">ryan</span></div>
-                            <div class="t-output">Request sent — waiting for Ryan to /connect back...</div>
-                            <div class="t-output t-highlight">Connected. Ryan can ask your shared sessions — nothing syncs, your Claude answers locally.</div>
+                            <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">sam</span></div>
+                            <div class="t-output">Request sent — waiting for Sam to /connect back...</div>
+                            <div class="t-output t-highlight">Connected. Sam can ask your shared sessions — nothing syncs, your Claude answers locally.</div>
                             <div class="t-row mt-4"><span class="t-prompt">❯</span><span class="t-cmd">Claude, rewrite the auth middleware...</span></div>
                         </div>
                     </div>
@@ -634,20 +635,19 @@
                     <div class="terminal mono">
                         <div class="terminal-header">
                             <div class="mac-dots"><div class="r"></div><div class="y"></div><div class="g"></div></div>
-                            <div class="terminal-title mono" style="font-size: 0.75rem">ryan — claude-code</div>
+                            <div class="terminal-title mono" style="font-size: 0.75rem">sam — claude-code</div>
                         </div>
                         <div class="terminal-body">
-                            <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">marcus</span></div>
-                            <div class="t-output t-highlight">Connected with marcus. You can /ask their shared sessions.</div>
-                            <div class="t-row" style="margin-top: 1rem;"><span class="t-prompt">❯</span><span class="t-cmd">/ask</span> <span class="t-arg">marcus what library did you pick for pagination?</span></div>
+                            <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/connect</span> <span class="t-arg">dario</span></div>
+                            <div class="t-output t-highlight">Connected with dario. You can /ask their shared sessions.</div>
+                            <div class="t-row" style="margin-top: 1rem;"><span class="t-prompt">❯</span><span class="t-cmd">/ask</span> <span class="t-arg">dario what library did you pick for pagination?</span></div>
                             <div class="t-output" style="color: #fff;">
                                 He went with <span class="t-highlight">cursor-based pagination</span> — "needed it to handle high-volume writes on the feed table."<br><br>
-                                <span class="t-cite">— @marcus, live (feed-service)</span>
+                                <span class="t-cite">— @dario, live (feed-service)</span>
                             </div>
                         </div>
                     </div>
                 </div>
-                <p class="mono" style="text-align: center; font-size: 0.75rem; color: var(--text-secondary); margin-top: 1.25rem; opacity: 0.7;">Marcus &amp; Ryan are teammates in the same org, working on the same project.</p>
             </div>
         </section>
 
@@ -693,14 +693,14 @@
                 <div>
                     <div class="timeline-item">
                         <div class="mono" style="color: var(--accent); margin-bottom: 0.5rem;">T-0:90 MIN</div>
-                        <p style="color: #fff;">Marcus is debugging a recursive trigger in a Salesforce migration. He's been at it for 90 minutes. <strong>He hasn't pushed anything.</strong></p>
+                        <p style="color: #fff;">Dario is debugging a recursive trigger in a Salesforce migration. He's been at it for 90 minutes. <strong>He hasn't pushed anything.</strong></p>
                     </div>
                     <div class="timeline-item active">
                         <div class="mono" style="color: var(--text-muted); margin-bottom: 0.5rem;">T-0:00 MIN</div>
-                        <p style="color: #fff;">Ryan hits the exact same problem in a related module.</p>
+                        <p style="color: #fff;">Sam hits the exact same problem in a related module.</p>
                     </div>
 
-                    <p style="margin-top: 2rem;">Without CodeBaton, there is nothing on GitHub. Ryan's choices are to ping Slack, wait for a PR that might take hours, or reverse-engineer the problem himself.</p>
+                    <p style="margin-top: 2rem;">Without CodeBaton, there is nothing on GitHub. Sam's choices are to ping Slack, wait for a PR that might take hours, or reverse-engineer the problem himself.</p>
                 </div>
 
                 <div class="terminal mono" style="height: 100%;">
@@ -709,12 +709,12 @@
                         <div class="terminal-title mono" style="font-size: 0.75rem">WITH CODEBATON</div>
                     </div>
                     <div class="terminal-body">
-                        <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/ask</span> <span class="t-arg">marcus What is Marcus seeing about the recursive trigger right now?</span></div>
+                        <div class="t-row"><span class="t-prompt">❯</span><span class="t-cmd">/ask</span> <span class="t-arg">dario What is Dario seeing about the recursive trigger right now?</span></div>
                         <div class="t-output" style="color: #fff; margin-top: 1rem;">
-                            Marcus is currently dealing with a recursive update on the <span class="t-highlight">AccountTrigger</span>.<br><br>
+                            Dario is currently dealing with a recursive update on the <span class="t-highlight">AccountTrigger</span>.<br><br>
                             His Claude instance just generated this SOQL query to bypass it:<br>
                             <span style="color: #a855f7;">SELECT Id FROM Account WHERE LastModifiedDate &lt; :Trigger.new[0].LastModifiedDate</span><br><br>
-                            <span style="color: var(--text-secondary);">— @marcus, live (sf-migration) · answered 94s ago. Never hit GitHub.</span>
+                            <span style="color: var(--text-secondary);">— @dario, live (sf-migration) · answered 94s ago. Never hit GitHub.</span>
                         </div>
                     </div>
                 </div>
@@ -798,14 +798,14 @@
                         <div class="step-number">3</div>
                         <div class="step-content">
                             <h3 style="color: #fff;">Connect Teammate</h3>
-                            <p style="font-size: 0.875rem;">Type <code>/connect marcus</code> — you both confirm once. No content syncs; it just unlocks asking each other.</p>
+                            <p style="font-size: 0.875rem;">Type <code>/connect dario</code> — you both confirm once. No content syncs; it just unlocks asking each other.</p>
                         </div>
                     </div>
                     <div class="step-item">
                         <div class="step-number">4</div>
                         <div class="step-content">
                             <h3 style="color: #fff;">Query Context</h3>
-                            <p style="font-size: 0.875rem;">Type <code>/ask ryan &lt;question&gt;</code>, pick which shared session to ask, and their Claude answers — you get just the answer, cited.</p>
+                            <p style="font-size: 0.875rem;">Type <code>/ask sam &lt;question&gt;</code>, pick which shared session to ask, and their Claude answers — you get just the answer, cited.</p>
                         </div>
                     </div>
                 </div>
