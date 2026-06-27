@@ -989,6 +989,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _same_origin(self) -> bool:
+        """CSRF guard for the local server. A browser always sends Origin on a
+        cross-site POST; the dashboard SPA (loaded from this same http origin)
+        sends Origin == our own Host. Reject only when an Origin/Referer is
+        present and points elsewhere. A non-browser local caller (CLI, the
+        Electron control path) sends neither — allow it; it can't be a CSRF."""
+        host = self.headers.get("Host", "")
+        for hdr in ("Origin", "Referer"):
+            val = self.headers.get(hdr)
+            if val:
+                return urllib.parse.urlparse(val).netloc == host
+        return True
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -1084,6 +1097,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._send_json(200, {"handle": me.json().get("github_handle"), "orgs": orgs})
                 return
             if path == "/dump":
+                # Returns raw session bytes — never serve it cross-origin.
+                if not self._same_origin():
+                    self._send_json(403, {"error": "cross-origin request blocked"})
+                    return
                 teammate = (query.get("teammate") or [""])[0]
                 session = (query.get("session") or [""])[0]
                 if not teammate or not session:
@@ -1114,6 +1131,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(e)})
 
     def do_POST(self):
+        if not self._same_origin():
+            self._send_json(403, {"error": "cross-origin request blocked"})
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         body = self._read_json_body()

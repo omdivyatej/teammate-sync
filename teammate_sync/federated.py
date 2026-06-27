@@ -369,29 +369,33 @@ def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_gett
         return
 
     for q in pending:
-        qid, asker, question = q["id"], q.get("asker", "a teammate"), q["question"]
+        qid, asker = q["id"], q.get("asker", "a teammate")
+        # Cap the untrusted question before it reaches the prompt/argv.
+        question = (q.get("question") or "")[:4000]
         kind = q.get("kind") or "answer"
-        if kind == "list":
-            # No fork, no Claude, no token needed — just the consent-filtered
-            # session list (labels + hints) for the asker's picker.
-            sessions = _list_sessions_for(asker)
-            answer, citation = json.dumps({"sessions": sessions}), "list"
-            _log("")
-            _log(f"════ LIST req from @{asker} @ {int(__import__('time').time())} ════")
-            _log(f"  returning {len(sessions)} shared session(s): "
-                 f"{', '.join(s['label'] for s in sessions) or '(none)'}")
-        elif not token:
-            answer, citation = (
-                "Decision capture / live answering isn't authorized on this "
-                "teammate's machine yet.", "")
-        else:
-            try:
-                claude_binary = claude_binary_getter()
-            except Exception:
-                answer, citation = ("Claude CLI not available to answer.", "")
+        try:
+            if kind == "list":
+                # No fork, no Claude, no token needed — just the consent-filtered
+                # session list (labels + hints) for the asker's picker.
+                sessions = _list_sessions_for(asker)
+                answer, citation = json.dumps({"sessions": sessions}), "list"
+                _log("")
+                _log(f"════ LIST req from @{asker} @ {int(__import__('time').time())} ════")
+                _log(f"  returning {len(sessions)} shared session(s): "
+                     f"{', '.join(s['label'] for s in sessions) or '(none)'}")
+            elif not token:
+                answer, citation = (
+                    "Decision capture / live answering isn't authorized on this "
+                    "teammate's machine yet.", "")
             else:
+                claude_binary = claude_binary_getter()
                 answer, citation = _answer_one(question, asker, claude_binary, token,
                                                session_id=q.get("session_id"))
+        except Exception as e:
+            # One bad query (e.g. a stale cwd, missing binary) must not drop the
+            # other pending answers this cycle.
+            _log(f"[federated] error answering {qid[:8]} from @{asker}: {e}")
+            answer, citation = ("Couldn't generate an answer right now.", "")
         try:
             from .auth import read_auth
             auth = read_auth()

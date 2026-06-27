@@ -45,7 +45,9 @@ Endpoints:
   /v1/dashboard?org=X                   GET aggregated state for the dashboard UI.
 """
 import os
+import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -60,7 +62,7 @@ from fastapi import (
     Response,
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import storage
 
@@ -164,7 +166,9 @@ class SessionUnshareRequest(BaseModel):
 
 class KnowledgeUploadRequest(BaseModel):
     org: str
-    content: str
+    # Hard cap so a single member can't fill the volume. A real knowledge.md is
+    # a few KB; 2MB is already absurdly generous.
+    content: str = Field(max_length=2_000_000)
 
 
 class KnowledgeDoc(BaseModel):
@@ -193,8 +197,16 @@ class QueryAnswerRequest(BaseModel):
 
 # ─── Auth helpers ──────────────────────────────────────────────────────────
 
-GITHUB_USER_CACHE: dict[str, dict] = {}
-GITHUB_MEMBERSHIP_CACHE: dict[tuple[str, str], bool] = {}
+# Cached entries are (value, expiry_epoch). TTLs bound how long a stale identity
+# or org-membership survives — without expiry, a user removed from the org would
+# keep access until the process restarts.
+GITHUB_USER_CACHE: dict[str, tuple[dict, float]] = {}
+GITHUB_MEMBERSHIP_CACHE: dict[tuple[str, str], float] = {}
+_USER_CACHE_TTL = 600        # 10 min
+_MEMBERSHIP_CACHE_TTL = 300  # 5 min — re-checks org membership at least this often
+# GitHub login/org shape: alphanumeric + single hyphens, ≤39 chars. Validating
+# this before interpolating into GitHub API URLs blocks path-injection.
+_HANDLE_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
 
 
 async def github_user_from_bearer(
@@ -207,8 +219,8 @@ async def github_user_from_bearer(
         raise HTTPException(status_code=401, detail="Empty bearer token")
 
     cached = GITHUB_USER_CACHE.get(token)
-    if cached:
-        return cached
+    if cached and cached[1] > time.time():
+        return cached[0]
 
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
@@ -233,14 +245,17 @@ async def github_user_from_bearer(
                 user["email"] = primary["email"]
 
     user["__token__"] = token
-    GITHUB_USER_CACHE[token] = user
+    GITHUB_USER_CACHE[token] = (user, time.time() + _USER_CACHE_TTL)
     return user
 
 
 async def require_workspace_member(user: dict, org: str) -> None:
+    if not _HANDLE_RE.match(org or ""):
+        raise HTTPException(status_code=400, detail="invalid org name")
     token = user["__token__"]
     cache_key = (token, org)
-    if GITHUB_MEMBERSHIP_CACHE.get(cache_key):
+    expiry = GITHUB_MEMBERSHIP_CACHE.get(cache_key)
+    if expiry and expiry > time.time():
         return
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
@@ -252,7 +267,7 @@ async def require_workspace_member(user: dict, org: str) -> None:
             status_code=403,
             detail=f"@{user['login']} is not a member of org '{org}' (or the OAuth app needs org approval)",
         )
-    GITHUB_MEMBERSHIP_CACHE[cache_key] = True
+    GITHUB_MEMBERSHIP_CACHE[cache_key] = time.time() + _MEMBERSHIP_CACHE_TTL
 
 
 # ─── Health + OAuth ────────────────────────────────────────────────────────
@@ -300,7 +315,7 @@ async def github_callback(code: str, state: str = ""):
     payload = r.json()
     access_token = payload.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=502, detail=f"No access_token in GitHub response: {payload}")
+        raise HTTPException(status_code=502, detail="GitHub did not return an access token")
 
     cli_redirect = ""
     if "|" in state:
