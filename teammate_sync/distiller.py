@@ -33,6 +33,13 @@ You are given the CURRENT knowledge.md (may be empty) and the engineer's most
 recent session transcript. Output ONLY the updated knowledge.md — nothing else,
 no preamble, no code fences around the whole thing.
 
+You are EDITING the document, not rewriting it. Reproduce every entry you are
+not changing EXACTLY — same wording, same timestamp, same citation. Do not
+reword, re-order, summarize, or drop anything you aren't explicitly changing.
+
+If this session has no new decision or durable finding, output the CURRENT
+knowledge.md UNCHANGED. Never invent a decision to seem productive.
+
 CAPTURE (decisions + durable findings, NOT activity):
 - Decisions: a choice between alternatives, with the reason ("chose X over Y because Z").
 - Findings/gotchas: a non-obvious fact learned the hard way.
@@ -58,14 +65,14 @@ _(session {session_id}, {datetime})_
 (struck-through past decisions, each with the date+time it changed)
 
 INVARIANTS:
-- ALWAYS stamp every entry with the date AND time in simple format
-  (YYYY-MM-DD HH:MM) using the timestamp given below. This is how a reader
-  (and you, on the next update) tells which decision is the latest and how
-  decisions evolved over time. Newer timestamp = more current.
+- Stamp ONLY new or genuinely-changed entries with the timestamp given below
+  (YYYY-MM-DD HH:MM). NEVER alter the timestamp on an existing entry you aren't
+  changing — its original time is how a reader (and you, next update) tells how
+  decisions evolved. Newer timestamp = more current.
+- Write entries declaratively ("Chose X over Y because Z"), not first person.
 - Cite every entry with its source session id + datetime. Never invent one.
 - No secrets: write [redacted] for any API key, token, or .env value.
-- Stay tight — a teammate skims this. No duplicates. Preserve everything you
-  are not actively changing.
+- Stay tight — a teammate skims this. No duplicates.
 
 === CURRENT knowledge.md ===
 {current_knowledge}
@@ -170,6 +177,12 @@ def distill_session(
         updated = res.stdout.strip()
         if not updated or "## Current decisions" not in updated:
             _log(f"[distill] unexpected output (len={len(updated)}); skipping write")
+            return False
+        # Backstop against the full-rewrite dropping past entries: a healthy
+        # update only grows or lightly edits. A big shrink = suspected truncation.
+        if current.strip() and len(updated) < 0.6 * len(current):
+            _log(f"[distill] output shrank {len(current)}->{len(updated)}B; "
+                 f"suspected truncation, skipping write")
             return False
 
         knowledge_path.parent.mkdir(parents=True, exist_ok=True)
