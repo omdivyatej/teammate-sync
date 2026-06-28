@@ -271,6 +271,7 @@ class DaemonState:
                 cmd += ["--session", str(session_jsonl),
                         "--out", str(knowledge),
                         "--session-id", session_id]
+                print(f"[knowledge] distilling decisions from session {session_id[:8]} → knowledge.md", flush=True)
                 # Fully detached: own session, stdout/stderr discarded (the
                 # distiller writes its own log). The daemon never waits.
                 subprocess.Popen(
@@ -523,9 +524,10 @@ def main() -> int:
             return _resolve_claude_binary()
         while not shutdown.is_set():
             try:
-                federated.poll_and_answer(
+                for line in federated.poll_and_answer(
                     read_claude_token, backend.org, backend.backend_url, _claude,
-                )
+                ) or []:
+                    print(line, flush=True)  # surface /ask activity in the log
             except Exception as e:
                 print(f"[sync] query poll error (non-fatal): {e}", flush=True)
             shutdown.wait(5)

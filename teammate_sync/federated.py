@@ -358,18 +358,19 @@ def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_gett
     my live session, post the answers back. Fail-safe — logs and continues."""
     token = token_getter()
     base = backend_url.rstrip("/")
+    summaries: list[str] = []   # human-readable lines for the daemon activity log
     try:
         from .auth import read_auth
         auth = read_auth()
         headers = {"Authorization": f"Bearer {auth['token']}"}
         r = httpx.get(f"{base}/v1/query/pending", params={"org": org}, headers=headers, timeout=15)
         if r.status_code != 200:
-            return
+            return summaries
         pending = r.json().get("queries", [])
     except (httpx.HTTPError, FileNotFoundError, ValueError, KeyError):
-        return
+        return summaries
     if not pending:
-        return
+        return summaries
 
     for q in pending:
         qid, asker = q["id"], q.get("asker", "a teammate")
@@ -411,3 +412,13 @@ def poll_and_answer(token_getter, org: str, backend_url: str, claude_binary_gett
             _log(f"[federated] answered query {qid[:8]} from @{asker}")
         except (httpx.HTTPError, FileNotFoundError, ValueError, KeyError) as e:
             _log(f"[federated] failed to post answer for {qid[:8]}: {e}")
+
+        # one human line per query for the activity log (skip the noisy list step)
+        if kind != "list":
+            if answer.startswith("Decision capture"):
+                summaries.append(f"[ask] @{asker} asked — Claude not authorized on this machine")
+            elif answer.startswith(("Couldn't generate", "Not found in shared", "Timed out", "That session isn't")):
+                summaries.append(f"[ask] @{asker} asked — no answer this time (see federated.log)")
+            else:
+                summaries.append(f"[ask] answered @{asker}'s /ask from {citation or 'your session'}")
+    return summaries
