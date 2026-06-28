@@ -327,6 +327,9 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str,
             if res.returncode != 0:
                 detail = (res.stderr.strip() or res.stdout.strip())[:300]
                 _log(f"    ✗ [{label}] claude failed rc={res.returncode}: {detail}")
+                if "401" in detail or "authenticate" in detail.lower():
+                    from .auth import mark_claude_token_invalid
+                    mark_claude_token_invalid()  # surfaces "re-authorize" in the dashboard
                 continue
             answer = _parse_answer(res.stdout)
             if answer:

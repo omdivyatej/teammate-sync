@@ -360,10 +360,10 @@ _INDEX_HTML = r"""<!doctype html>
                 <div id="authz-banner" class="hidden mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center gap-3 text-sm">
                     <span class="flex-shrink-0 text-amber-400">⚠</span>
                     <div class="flex-1 min-w-0">
-                        <p class="text-white font-medium">Claude not authorized on this machine</p>
-                        <p class="text-brand-textMuted text-xs mt-0.5">Teammates can't get live <code>/ask</code> answers from you until you authorize. (You can still ask others.)</p>
+                        <p class="text-white font-medium">Claude token expired or not authorized</p>
+                        <p class="text-brand-textMuted text-xs mt-0.5">Live <code>/ask</code> answers and decision capture are idle until you re-authorize. (You can still ask others.)</p>
                     </div>
-                    <button id="authz-banner-btn" class="flex-shrink-0 px-3 py-1.5 rounded-md bg-amber-400 text-black text-xs font-semibold hover:opacity-90 transition">Authorize Claude</button>
+                    <button id="authz-banner-btn" class="flex-shrink-0 px-3 py-1.5 rounded-md bg-amber-400 text-black text-xs font-semibold hover:opacity-90 transition">Re-authorize</button>
                 </div>
 
                 <!-- OVERVIEW -->
@@ -798,17 +798,20 @@ async function refreshLogs(){
 // ── settings ──
 async function loadSettings(){ try{ const s=await getJ('/settings'); $('set-notif').checked=!!s.notifications_enabled; $('set-autostart').checked=!!s.autostart_installed; $('set-distill').checked=!!s.distill_enabled; renderClaudeAuth(s.distill_enabled, s.claude_authorized); }catch(e){} }
 function renderClaudeAuth(distillOn, authed){
-  const row=$('claude-auth-row'), status=$('claude-auth-status'), actions=$('claude-auth-actions');
+  const row=$('claude-auth-row'), status=$('claude-auth-status'), actions=$('claude-auth-actions'), btn=$('btn-claude-auth');
   if(!distillOn){ row.classList.add('hidden'); return; }
   row.classList.remove('hidden');
+  // Always keep the re-auth action available — a token can expire/rotate while a
+  // file still exists, so the user must be able to replace it at any time.
+  actions.classList.remove('hidden');
   if(authed){
     status.textContent='✓ Claude authorized for background capture + live answers';
     status.className='text-xs text-brand-lime';
-    actions.classList.add('hidden');
+    if(btn) btn.textContent='Re-authorize';
   } else {
-    status.textContent='Claude not authorized — capture & live answers are idle.';
-    status.className='text-xs text-brand-textMuted';
-    actions.classList.remove('hidden');
+    status.textContent='Claude token expired or missing — capture & live answers are idle.';
+    status.className='text-xs text-amber-400';
+    if(btn) btn.textContent='Authorize Claude (opens browser)';
   }
 }
 let _claudeAuthPoll=null;
@@ -1018,8 +1021,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 snap["org"] = self.org
                 snap["daemon"] = _daemon_status()
                 snap["signed_in"] = True
-                from .auth import read_claude_token
-                snap["claude_authorized"] = read_claude_token() is not None
+                from .auth import claude_token_ok
+                snap["claude_authorized"] = claude_token_ok()
                 # What YOU are sharing lives in the LOCAL registry (federated
                 # model uploads nothing). Compute {recipient: [session_id...]}.
                 my_shares: dict[str, list[str]] = {}
@@ -1117,13 +1120,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if path == "/settings":
                 prefs = _read_notify_prefs()
                 from . import cli
-                from .auth import read_claude_token
+                from .auth import claude_token_ok
                 self._send_json(200, {
                     "notifications_enabled": bool(prefs.get("enabled", True)),
                     "autostart_installed": _autostart_installed(),
                     "autostart_supported": sys.platform == "darwin",
                     "distill_enabled": cli.distill_enabled(),
-                    "claude_authorized": read_claude_token() is not None,
+                    "claude_authorized": claude_token_ok(),
                 })
                 return
             self._send_json(404, {"error": f"unknown path {path}"})

@@ -173,6 +173,9 @@ def distill_session(
             # stdout, not stderr.
             detail = (res.stderr.strip() or res.stdout.strip())[:500]
             _log(f"[distill] claude failed rc={res.returncode}: {detail}")
+            if "401" in detail or "authenticate" in detail.lower():
+                from .auth import mark_claude_token_invalid
+                mark_claude_token_invalid()  # surfaces "re-authorize" in the dashboard
             return False
         updated = res.stdout.strip()
         if not updated or "## Current decisions" not in updated:

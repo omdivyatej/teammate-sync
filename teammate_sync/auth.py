@@ -46,7 +46,41 @@ def write_claude_token(token: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(token.strip())
     p.chmod(0o600)
+    clear_claude_token_invalid()  # a freshly-saved token is assumed good again
     return p
+
+
+# ── token-validity marker ──────────────────────────────────────────────────
+# A token FILE existing doesn't mean the token WORKS. The distiller and the
+# federated answerer set this marker when Claude rejects the token (401); the
+# dashboard treats a marked token as not-authorized so the green check is honest.
+def _token_invalid_marker() -> Path:
+    return claude_token_path().parent / "state" / "claude-token-invalid"
+
+
+def mark_claude_token_invalid() -> None:
+    p = _token_invalid_marker()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("401")
+    except OSError:
+        pass
+
+
+def claude_token_invalid() -> bool:
+    return _token_invalid_marker().exists()
+
+
+def clear_claude_token_invalid() -> None:
+    try:
+        _token_invalid_marker().unlink()
+    except OSError:
+        pass
+
+
+def claude_token_ok() -> bool:
+    """A token is usable only if present AND not flagged invalid by a 401."""
+    return read_claude_token() is not None and not claude_token_invalid()
 
 
 def read_auth() -> dict:

@@ -33,3 +33,11 @@ cloud/*.pem
 
 # Local example_data control files
 example_data/.sync-state.json
+
+# demo video build artifacts (node_modules ships a 160MB headless Chromium)
+demo/remotion/node_modules/
+demo/remotion/out/
+demo/remotion/.remotion/
+demo/__pycache__/
+demo/**/*.mp4
+demo/codebaton-demo.mp4
