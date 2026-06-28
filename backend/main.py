@@ -169,16 +169,32 @@ class KnowledgeUploadRequest(BaseModel):
     # Hard cap so a single member can't fill the volume. A real knowledge.md is
     # a few KB; 2MB is already absurdly generous.
     content: str = Field(max_length=2_000_000)
+    project: str = Field(default="", max_length=120)
 
 
 class KnowledgeDoc(BaseModel):
     engineer_handle: str
+    project: str = ""
     content: str
     updated_at: float
 
 
 class KnowledgeResponse(BaseModel):
     docs: list[KnowledgeDoc]
+
+
+class ProjectRegisterRequest(BaseModel):
+    org: str
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ProjectEntry(BaseModel):
+    name: str
+    members: list[str]
+
+
+class ProjectsResponse(BaseModel):
+    projects: list[ProjectEntry]
 
 
 class QueryCreateRequest(BaseModel):
@@ -441,8 +457,24 @@ async def upload_knowledge(
     """Upsert the caller's durable knowledge doc (distilled decisions). Persists
     org-wide and survives the caller going offline — powers /ask-all."""
     await require_workspace_member(user, req.org)
-    await storage.upsert_knowledge(req.org, user["login"], req.content)
-    return {"ok": True, "engineer": user["login"], "size": len(req.content)}
+    await storage.upsert_knowledge(req.org, user["login"], req.content, project=req.project)
+    return {"ok": True, "engineer": user["login"], "project": req.project, "size": len(req.content)}
+
+
+@app.get("/v1/projects", response_model=ProjectsResponse)
+async def list_projects(org: str, user: dict = Depends(github_user_from_bearer)) -> ProjectsResponse:
+    """Canonical projects in the caller's org, each with member handles. Powers
+    the set-project picker (what teammates are working on)."""
+    await require_workspace_member(user, org)
+    return ProjectsResponse(projects=[ProjectEntry(**p) for p in await storage.list_projects(org)])
+
+
+@app.post("/v1/projects")
+async def register_project(req: ProjectRegisterRequest, user: dict = Depends(github_user_from_bearer)) -> dict:
+    """Register/join a canonical project (creates it if new)."""
+    await require_workspace_member(user, req.org)
+    await storage.register_project(req.org, req.name.strip(), user["login"])
+    return {"ok": True, "name": req.name.strip()}
 
 
 @app.get("/v1/knowledge", response_model=KnowledgeResponse)

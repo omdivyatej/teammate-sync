@@ -437,16 +437,48 @@ The user's question is: $ARGUMENTS
 """
 
 
+_SET_PROJECT_SLASH_MD = """---
+description: Tag this folder with a canonical project (sticky — sessions here auto-tag for /ask + team knowledge).
+argument-hint: "[project name]"
+allowed-tools: Bash({binary}:*)
+---
+
+The user wants to tag this folder with a canonical project. Two cases:
+
+1. If the user gave a project name in $ARGUMENTS, set it directly:
+   ```
+   "{binary}" set-project --set "$ARGUMENTS"
+   ```
+   Show the output and stop.
+
+2. If $ARGUMENTS is empty, FIRST list the choices:
+   ```
+   "{binary}" set-project --list
+   ```
+   Present the numbered list of projects the team is working on (plus the option
+   to name a brand-new project) and ask the user which one — they reply with a
+   number or a new name. THEN set their choice by NAME (not number):
+   ```
+   "{binary}" set-project --set "<the chosen or typed project name>"
+   ```
+   Show that final output verbatim. Don't add commentary.
+
+(The slick arrow-key picker lives in a real terminal: `{binary} set-project`.)
+"""
+
+
 def _slash_command_md(action: str, binary: str) -> str:
     """
     Generate a slash-command markdown file. Most slash commands shell out to
-    the installed `teammate-sync` binary; /ask + /ask-all are special and tell
-    Claude to call an MCP tool directly.
+    the installed `teammate-sync` binary; /ask + /ask-all + /set-project are
+    special and need multi-step or MCP behavior.
     """
     if action == "ask":
         return _ASK_SLASH_MD
     if action == "ask-all":
         return _ASK_ALL_SLASH_MD
+    if action == "set-project":
+        return _SET_PROJECT_SLASH_MD.replace("{binary}", binary)
 
     spec = SLASH_COMMAND_SPECS[action]
     hint_yaml = f'argument-hint: "{spec["args_hint"]}"\n' if spec["args_hint"] else ""
@@ -472,7 +504,7 @@ After showing the output, do NOT add commentary.
 
 # Order matters for the install summary print: list in the order they'd
 # logically be used.
-_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "alias", "ask", "ask-all"]
+_INSTALL_ACTIONS = ["connect", "disconnect", "shared", "alias", "set-project", "ask", "ask-all"]
 
 
 def _wire_claude_integration(binary: str) -> None:
@@ -1058,8 +1090,106 @@ def cmd_distill(args) -> int:
     except RuntimeError:
         return 1
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    ok = distiller.distill_session(session, out, sid, when, claude)
+    ok = distiller.distill_session(session, out, sid, when, claude,
+                                   project=getattr(args, "project", "") or "")
     return 0 if ok else 1
+
+
+def _fetch_org_projects() -> list[dict]:
+    """Canonical projects in the org (name + members), via the backend."""
+    try:
+        import httpx
+        auth = read_auth()
+        r = httpx.get(f"{auth['backend_url'].rstrip('/')}/v1/projects",
+                      params={"org": auth["org"]},
+                      headers={"Authorization": f"Bearer {auth['token']}"}, timeout=15)
+        r.raise_for_status()
+        return r.json().get("projects", [])
+    except Exception:
+        return []
+
+
+def _register_project(name: str) -> None:
+    try:
+        import httpx
+        auth = read_auth()
+        httpx.post(f"{auth['backend_url'].rstrip('/')}/v1/projects",
+                   json={"org": auth["org"], "name": name},
+                   headers={"Authorization": f"Bearer {auth['token']}"}, timeout=15)
+    except Exception:
+        pass
+
+
+def _apply_project(name: str) -> int:
+    """Sticky-map the current folder → canonical project, register it org-wide."""
+    from . import projects
+    cwd = os.getcwd()
+    root = projects.set_project_for_cwd(cwd, name)
+    _register_project(name)
+    print(f"✓ This folder is now project '{name}'.")
+    print(f"  ({root} — remembered; sessions here auto-tag. Re-run set-project to change.)")
+    return 0
+
+
+def cmd_set_project(args) -> int:
+    """Tag the current folder with a canonical project (sticky per folder).
+
+    Three modes:
+      set-project            → interactive picker (arrow keys in a real terminal)
+      set-project --list     → print the choices (for the /set-project slash cmd)
+      set-project --set NAME → set directly (scripted / after an in-chat pick)
+    """
+    from . import projects
+    cwd = os.getcwd()
+    current = projects.project_for_cwd(cwd)
+
+    if getattr(args, "set", None):
+        return _apply_project(args.set.strip())
+
+    existing = [p["name"] for p in _fetch_org_projects()]
+
+    if getattr(args, "list", False):
+        # Machine-readable-ish list for the slash command to present in-chat.
+        print(f"current: {current or '(none)'}")
+        print(f"cwd: {cwd}")
+        if existing:
+            print("projects your team is working on:")
+            for i, n in enumerate(existing, 1):
+                print(f"  {i}. {n}")
+        else:
+            print("no projects registered yet — name a new one.")
+        print("  + new project (any name)")
+        return 0
+
+    # Interactive picker — real arrow-key menu in a TTY, else numbered fallback.
+    options = existing + ["➕ new project…"]
+    label = f"  (current: {current})" if current else ""
+    print(f"Tag this folder with a project{label}:")
+    idx = None
+    try:
+        from simple_term_menu import TerminalMenu  # optional; nice TTY picker
+        if sys.stdin.isatty():
+            idx = TerminalMenu(options, title="↑/↓ to choose · Enter to select").show()
+    except Exception:
+        idx = None
+    if idx is None:  # fallback: numbered input (non-TTY or lib missing)
+        for i, n in enumerate(options, 1):
+            print(f"  {i}. {n}")
+        raw = input("Pick a number (or type a new name): ").strip()
+        if raw.isdigit():
+            idx = int(raw) - 1
+        elif raw:
+            return _apply_project(raw)
+        else:
+            print("Cancelled."); return 1
+    if idx is None or idx < 0:
+        print("Cancelled."); return 1
+    if idx == len(options) - 1:  # "new project"
+        name = input("New project name: ").strip()
+        if not name:
+            print("Cancelled."); return 1
+        return _apply_project(name)
+    return _apply_project(options[idx])
 
 
 def cmd_mcp_server(args) -> int:
@@ -1213,7 +1343,14 @@ def main() -> int:
     p_distill.add_argument("--session", required=True, help="Path to the session .jsonl")
     p_distill.add_argument("--out", required=True, help="Path to knowledge.md to update")
     p_distill.add_argument("--session-id", default=None)
+    p_distill.add_argument("--project", default="")
     p_distill.set_defaults(func=cmd_distill)
+
+    p_setproj = sub.add_parser("set-project",
+        help="Tag this folder with a canonical project (sticky per folder).")
+    p_setproj.add_argument("--list", action="store_true", help="Print choices (used by /set-project).")
+    p_setproj.add_argument("--set", default=None, metavar="NAME", help="Set directly without the picker.")
+    p_setproj.set_defaults(func=cmd_set_project)
 
     # Authorize Claude for headless/background decision capture (browser OAuth
     # via `claude setup-token`). Stores the token for the daemon's distiller.

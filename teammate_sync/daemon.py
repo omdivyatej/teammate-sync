@@ -263,15 +263,25 @@ class DaemonState:
         def _fire():
             try:
                 binary = os.environ.get("TEAMMATE_SYNC_BIN") or sys.executable
-                knowledge = self.workspace / "knowledge.md"
+                # Resolve the canonical project for this session (sticky folder
+                # map), so knowledge is keyed per-project. Falls back to '' (the
+                # engineer's default doc) when no project is set.
+                from . import projects, federated
+                cwd = federated._session_cwd(str(session_jsonl)) or ""
+                project = projects.project_for_cwd(cwd) or ""
+                slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in project) or "default"
+                kdir = Path("~/.teammate-sync/knowledge").expanduser()
+                kdir.mkdir(parents=True, exist_ok=True)
+                knowledge = kdir / f"{slug}.md"
                 if binary == sys.executable:
                     cmd = [sys.executable, "-m", "teammate_sync.cli", "distill"]
                 else:
                     cmd = [binary, "distill"]
                 cmd += ["--session", str(session_jsonl),
                         "--out", str(knowledge),
-                        "--session-id", session_id]
-                print(f"[knowledge] distilling decisions from session {session_id[:8]} → knowledge.md", flush=True)
+                        "--session-id", session_id,
+                        "--project", project]
+                print(f"[knowledge] distilling session {session_id[:8]} → knowledge ({project or 'default'})", flush=True)
                 # Fully detached: own session, stdout/stderr discarded (the
                 # distiller writes its own log). The daemon never waits.
                 subprocess.Popen(

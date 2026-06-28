@@ -169,9 +169,10 @@ def _list_sessions_for(asker: str) -> list[dict]:
     out = []
     for s in _connected_active(asker):
         cwd = _session_cwd(s.get("transcript_path")) or s.get("cwd") or ""
+        from . import projects
         out.append({
             "session_id": s["session_id"],
-            "label": _git_label(cwd),
+            "label": projects.label_for_cwd(cwd),
             "last_activity_epoch": s.get("last_activity_epoch") or 0,
             "hint": _last_human_turn(s.get("transcript_path")),
         })
@@ -280,7 +281,8 @@ def _answer_one(question: str, asker: str, claude_binary: str, token: str,
     # Real launch dir from the transcript itself; fall back to the registry cwd.
     cwd = _session_cwd(transcript_path) or sess.get("cwd") or str(Path.home())
     project_dir = Path(transcript_path).parent if transcript_path else None
-    label = _git_label(cwd)
+    from . import projects
+    label = projects.label_for_cwd(cwd)
     citation = label
 
     # Snapshot existing session files so we can delete the throwaway fork after.

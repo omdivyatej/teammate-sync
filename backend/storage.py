@@ -90,13 +90,26 @@ CREATE INDEX IF NOT EXISTS idx_session_shares_recipient
 CREATE TABLE IF NOT EXISTS knowledge (
     workspace_org  TEXT NOT NULL,
     engineer_handle TEXT NOT NULL,
+    project        TEXT NOT NULL DEFAULT '',
     content        TEXT NOT NULL,
     updated_at     REAL NOT NULL,
-    PRIMARY KEY (workspace_org, engineer_handle)
+    PRIMARY KEY (workspace_org, engineer_handle, project)
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_org
     ON knowledge (workspace_org);
+
+-- Org-wide canonical project registry. Powers `set-project`'s picker (what
+-- teammates are working on) and is the join key for cross-engineer linking.
+-- One row per (org, project, member); registering a project = upserting your
+-- membership in it.
+CREATE TABLE IF NOT EXISTS project_membership (
+    workspace_org  TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    handle         TEXT NOT NULL,
+    updated_at     REAL NOT NULL,
+    PRIMARY KEY (workspace_org, name, handle)
+);
 
 -- Federated live queries: store-and-forward request/response so an asker can
 -- query a teammate's live Claude session WITHOUT the teammate's raw transcript
@@ -134,25 +147,49 @@ async def init_db() -> None:
                 await db.execute(f"ALTER TABLE queries ADD COLUMN {ddl}")
             except Exception:
                 pass  # column already present
+        # Knowledge: re-key (org, engineer) -> (org, engineer, project). Lossless —
+        # existing single-doc-per-engineer rows migrate to project='' and stay
+        # readable by /ask-all. Detected by the absence of the `project` column.
+        async with db.execute("PRAGMA table_info(knowledge)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if cols and "project" not in cols:
+            await db.executescript(
+                """
+                ALTER TABLE knowledge RENAME TO knowledge_old;
+                CREATE TABLE knowledge (
+                    workspace_org  TEXT NOT NULL,
+                    engineer_handle TEXT NOT NULL,
+                    project        TEXT NOT NULL DEFAULT '',
+                    content        TEXT NOT NULL,
+                    updated_at     REAL NOT NULL,
+                    PRIMARY KEY (workspace_org, engineer_handle, project)
+                );
+                INSERT INTO knowledge (workspace_org, engineer_handle, project, content, updated_at)
+                    SELECT workspace_org, engineer_handle, '', content, updated_at FROM knowledge_old;
+                DROP TABLE knowledge_old;
+                CREATE INDEX IF NOT EXISTS idx_knowledge_org ON knowledge (workspace_org);
+                """
+            )
         await db.commit()
 
 
 # ─── Knowledge (durable, org-wide, offline-readable) ───────────────────────
 
-async def upsert_knowledge(workspace_org: str, engineer_handle: str, content: str) -> None:
-    """Replace this engineer's knowledge doc with the latest distilled version.
-    One row per engineer; the distiller evolves the doc client-side (append +
-    supersede), so this just stores the newest full content."""
+async def upsert_knowledge(workspace_org: str, engineer_handle: str, content: str,
+                           project: str = "") -> None:
+    """Replace this engineer's knowledge doc for `project` with the latest
+    distilled version. One row per (engineer, project); the distiller evolves
+    the doc client-side (append + supersede), so this stores the newest content."""
     now = time.time()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO knowledge (workspace_org, engineer_handle, content, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(workspace_org, engineer_handle)
+            INSERT INTO knowledge (workspace_org, engineer_handle, project, content, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(workspace_org, engineer_handle, project)
             DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at
             """,
-            (workspace_org, engineer_handle, content, now),
+            (workspace_org, engineer_handle, project, content, now),
         )
         await db.commit()
 
@@ -163,7 +200,7 @@ async def get_org_knowledge(workspace_org: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             """
-            SELECT engineer_handle, content, updated_at
+            SELECT engineer_handle, project, content, updated_at
             FROM knowledge WHERE workspace_org=?
             ORDER BY updated_at DESC
             """,
@@ -171,9 +208,40 @@ async def get_org_knowledge(workspace_org: str) -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     return [
-        {"engineer_handle": r[0], "content": r[1], "updated_at": r[2]}
+        {"engineer_handle": r[0], "project": r[1], "content": r[2], "updated_at": r[3]}
         for r in rows
     ]
+
+
+# ─── Project registry (canonical names, org-wide) ──────────────────────────
+
+async def register_project(workspace_org: str, name: str, handle: str) -> None:
+    """Upsert the caller's membership in a canonical project (creates it if new)."""
+    now = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO project_membership (workspace_org, name, handle, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(workspace_org, name, handle) DO UPDATE SET updated_at=excluded.updated_at""",
+            (workspace_org, name, handle, now),
+        )
+        await db.commit()
+
+
+async def list_projects(workspace_org: str) -> list[dict]:
+    """Canonical projects in the org, each with its member handles. Powers the
+    set-project picker (what teammates are working on)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT name, handle FROM project_membership
+               WHERE workspace_org=? ORDER BY name, handle""",
+            (workspace_org,),
+        ) as cur:
+            rows = await cur.fetchall()
+    out: dict[str, list[str]] = {}
+    for name, handle in rows:
+        out.setdefault(name, []).append(handle)
+    return [{"name": n, "members": m} for n, m in sorted(out.items())]
 
 
 # ─── Federated queries (live ask, store-and-forward) ───────────────────────

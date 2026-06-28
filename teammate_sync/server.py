@@ -867,20 +867,22 @@ def set_ask_default(teammate: str, label: str) -> str:
 
 
 def _knowledge_for(teammate: str, auth: dict, headers: dict, base: str) -> str | None:
-    """Fetch just `teammate`'s knowledge.md from the durable store, for the
-    offline fallback of a live query."""
+    """Fetch `teammate`'s durable knowledge for the offline fallback of a live
+    query — all their per-project docs, concatenated under project headers."""
     import httpx
     try:
         r = httpx.get(f"{base}/v1/knowledge", params={"org": auth["org"]},
                       headers=headers, timeout=15)
         if r.status_code != 200:
             return None
+        blocks = []
         for d in r.json().get("docs", []):
-            if d.get("engineer_handle") == teammate:
-                return d.get("content")
+            if d.get("engineer_handle") == teammate and d.get("content"):
+                hdr = f"## {d['project']}\n" if d.get("project") else ""
+                blocks.append(hdr + d["content"])
+        return "\n\n".join(blocks) if blocks else None
     except httpx.HTTPError:
         return None
-    return None
 
 
 @mcp.tool()
@@ -928,7 +930,8 @@ def query_team_knowledge() -> str:
     ]
     for d in docs:
         when = datetime.fromtimestamp(d["updated_at"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-        sections.append(f"=== @{d['engineer_handle']} (updated {when} UTC) ===\n{d['content']}")
+        proj = f" · {d['project']}" if d.get("project") else ""
+        sections.append(f"=== @{d['engineer_handle']}{proj} (updated {when} UTC) ===\n{d['content']}")
     return "\n\n".join(sections)
 
 

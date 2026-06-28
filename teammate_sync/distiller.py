@@ -106,7 +106,7 @@ def build_prompt(session_text: str, current_knowledge: str, session_id: str, whe
     )
 
 
-def _push_to_backend(content: str) -> None:
+def _push_to_backend(content: str, project: str = "") -> None:
     """Upload the engineer's knowledge doc to the durable, org-wide store so
     /ask-all can read it even when this machine is offline. Best-effort."""
     try:
@@ -115,7 +115,7 @@ def _push_to_backend(content: str) -> None:
         auth = read_auth()
         httpx.post(
             f"{auth['backend_url'].rstrip('/')}/v1/knowledge",
-            json={"org": auth["org"], "content": content},
+            json={"org": auth["org"], "content": content, "project": project},
             headers={"Authorization": f"Bearer {auth['token']}"},
             timeout=20,
         )
@@ -130,6 +130,7 @@ def distill_session(
     when: str,
     claude_binary: str,
     max_chars: int = 60000,
+    project: str = "",
 ) -> bool:
     """Read a session, fold it into knowledge.md via the engineer's own Claude.
     Returns True if knowledge.md was updated. Fail-safe: returns False on any
@@ -191,7 +192,7 @@ def distill_session(
         knowledge_path.parent.mkdir(parents=True, exist_ok=True)
         knowledge_path.write_text(updated + "\n")
         _log(f"[distill] updated {knowledge_path.name} from session {session_id} ({len(updated)}B)")
-        _push_to_backend(updated)  # durable org-wide store for /ask-all
+        _push_to_backend(updated, project=project)  # durable org-wide store for /ask-all
         return True
     except Exception as e:  # fail-safe: distillation must never break the daemon
         _log(f"[distill] error: {e}")
