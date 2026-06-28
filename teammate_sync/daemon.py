@@ -307,11 +307,18 @@ class DaemonState:
         """
         with self._lock:
             new_info = read_shared_session_info(self.workspace)
-            old_set = set(self.shared_session_info.keys())
-            new_set = set(new_info.keys())
+            old_info = self.shared_session_info
             self.shared_session_info = new_info
-            if new_set != old_set:
-                print(f"[sync] shared sessions now: {sorted(new_set) or '(none)'}", flush=True)
+            # Diff (session, recipient) pairs so the activity log shows who you
+            # connected with / disconnected from, not just a raw id set.
+            old_pairs = {(s, r) for s, rs in old_info.items() for r in (rs or [])}
+            new_pairs = {(s, r) for s, rs in new_info.items() for r in (rs or [])}
+            for s, r in sorted(new_pairs - old_pairs):
+                print(f"[connect] now sharing session {s[:8]} with @{r}", flush=True)
+            for s, r in sorted(old_pairs - new_pairs):
+                print(f"[disconnect] stopped sharing session {s[:8]} with @{r}", flush=True)
+            if not (new_pairs ^ old_pairs) and set(new_info) != set(old_info):
+                print(f"[sync] shared sessions now: {sorted(new_info) or '(none)'}", flush=True)
 
 
 class MirrorHandler(FileSystemEventHandler):
