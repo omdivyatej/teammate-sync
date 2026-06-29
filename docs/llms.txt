@@ -20,11 +20,11 @@ GitHub captures the finished work that survived review. CodeBaton captures the l
 Nothing is shared by default. You opt in per session to specific people; only members of your GitHub org can connect; ending the session or running /disconnect wipes the shared copy immediately.
 
 ## Install
-- Desktop app (macOS, Apple Silicon, beta): https://github.com/omdivyatej/teammate-sync/releases
+- Desktop app (macOS, Apple Silicon, beta): https://github.com/codebaton/teammate-sync/releases
 - CLI (macOS, Linux, Windows): pipx install teammate-sync
 
 ## Links
-- Site: https://omdivyatej.github.io/teammate-sync/
-- Source: https://github.com/omdivyatej/teammate-sync
+- Site: https://codebaton.github.io/teammate-sync/
+- Source: https://github.com/codebaton/teammate-sync
 - PyPI: https://pypi.org/project/teammate-sync/
 - Contact: om@turgon.ai

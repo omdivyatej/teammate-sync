@@ -684,6 +684,6 @@ backend/
 
 Live URLs:
 - PyPI: https://pypi.org/project/teammate-sync/
-- Source: https://github.com/omdivyatej/teammate-sync
-- Landing: https://omdivyatej.github.io/teammate-sync/
+- Source: https://github.com/codebaton/teammate-sync
+- Landing: https://codebaton.github.io/teammate-sync/
 - Backend: https://teammate-sync-backend.fly.dev/health

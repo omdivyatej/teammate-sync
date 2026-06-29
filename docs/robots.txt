@@ -16,4 +16,4 @@ Allow: /
 User-agent: Google-Extended
 Allow: /
 
-Sitemap: https://omdivyatej.github.io/teammate-sync/sitemap.xml
+Sitemap: https://codebaton.github.io/teammate-sync/sitemap.xml

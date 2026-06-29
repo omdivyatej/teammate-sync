@@ -8,8 +8,8 @@ your Claude returns a cited answer in seconds.
 Four slash commands. Per-session, explicit. Local dashboard for inspection.
 No pasted transcripts, no GitHub pushes, no shared bucket setup.
 
-- Landing: https://omdivyatej.github.io/teammate-sync/
-- Source: https://github.com/omdivyatej/teammate-sync
+- Landing: https://codebaton.github.io/teammate-sync/
+- Source: https://github.com/codebaton/teammate-sync
 
 ---
 

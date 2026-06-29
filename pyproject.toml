@@ -33,8 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://omdivyatej.github.io/teammate-sync/"
-Source = "https://github.com/omdivyatej/teammate-sync"
+Homepage = "https://codebaton.github.io/teammate-sync/"
+Source = "https://github.com/codebaton/teammate-sync"
 
 [project.scripts]
 # `pip install` puts this on the user's PATH. All functionality is reachable
