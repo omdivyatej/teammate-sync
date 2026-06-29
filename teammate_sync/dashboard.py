@@ -371,6 +371,7 @@ _INDEX_HTML = r"""<!doctype html>
                     <header class="mb-8">
                         <h2 class="text-2xl font-medium text-white tracking-tight">Overview</h2>
                         <p class="text-sm text-brand-textMuted mt-1">Your live context-sharing state.</p>
+                        <p id="ov-projects" class="text-xs font-mono text-brand-textMuted mt-2 hidden"></p>
                     </header>
 
                     <section id="daemon-card" class="mb-10 scanline-container rounded-xl border border-brand-borderSubtle bg-brand-surface shadow-lg relative animate-glow-pulse">
@@ -714,6 +715,10 @@ function renderOverview(d){
   $('daemon-btn-led').className='h-1.5 w-1.5 rounded-full '+(alive?'bg-red-500':'bg-brand-lime');
   $('daemon-btn-label').textContent = alive?'Stop Engine':'Start Engine';
   $('ov-sessions').innerHTML = mine.length ? mine.map(sessionRow).join('') : emptyShare();
+  const projs = d.my_projects||[];
+  const ovp = $('ov-projects');
+  ovp.textContent = projs.length ? ('On: '+projs.join(' · ')) : '';
+  ovp.classList.toggle('hidden', !projs.length);
 }
 function sessionRow(s){
   const recips=(s.recipients||[]).map(r=>`<span class="text-xs font-mono text-brand-lime">@${esc(r)}</span>`).join(', ')||'<span class="text-xs text-red-400">no recipients</span>';
@@ -758,15 +763,14 @@ function renderConnections(d){
 }
 function renderSessions(d){
   // "You're sharing": per recipient, from the LOCAL share registry.
-  const shares = d.my_shares || {};            // {recipient: [sid8, ...]}
+  const shares = d.my_shares || {};            // {recipient: [projectLabel, ...]}
   const recips = Object.keys(shares);
   $('sess-sharing').innerHTML = recips.length ? recips.map(r=>{
-    const sids = shares[r]||[];
-    const chips = sids.map(s=>`<span class="text-[10px] font-mono text-brand-textMuted bg-brand-bg border border-brand-borderSubtle rounded px-1.5 py-0.5">${esc(s)}…</span>`).join(' ');
+    const projs = shares[r]||[];
+    const chips = projs.map(p=>`<span class="text-[11px] font-mono text-brand-lime bg-brand-lime/10 border border-brand-lime/25 rounded-full px-2 py-0.5">${esc(p)}</span>`).join(' ');
     return `<div class="rounded-lg border border-brand-lime/20 bg-[#0D0D0F] p-4 mb-3">
       <div class="flex items-center gap-3 mb-2">${avatar(r,false)}
-        <span class="text-sm text-white">You're sharing <span class="font-semibold text-brand-lime">${sids.length}</span> session${sids.length===1?'':'s'} with <span class="font-mono">@${esc(r)}</span></span></div>
-      <div class="flex flex-wrap gap-1.5 ml-11">${chips}</div>
+        <span class="text-sm text-white">You're sharing your ${chips} with <span class="font-mono">@${esc(r)}</span></span></div>
     </div>`;
   }).join('') : `<div class="rounded-lg border border-dashed border-white/10 p-8 text-center"><p class="text-sm text-brand-textMuted">You're not sharing any session.</p><p class="text-xs text-brand-textMuted mt-1">Run <span class="font-mono text-brand-lime">/connect &lt;teammate&gt;</span> inside a Claude Code session to make it answerable.</p></div>`;
 
@@ -1024,20 +1028,61 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 from .auth import claude_token_ok
                 snap["claude_authorized"] = claude_token_ok()
                 # What YOU are sharing lives in the LOCAL registry (federated
-                # model uploads nothing). Compute {recipient: [session_id...]}.
+                # model uploads nothing). Show canonical PROJECT labels per
+                # recipient (not opaque session-id hashes). Resolve each shared
+                # session_id → cwd via the active-sessions registry, then map cwd
+                # to its project label. Fall back to session_id[:8] if no cwd.
+                from . import projects, federated
+                # Build a session_id → (cwd, transcript_path) lookup once.
+                active_by_sid: dict[str, dict] = {}
+                try:
+                    from .backend import ACTIVE_SESSIONS_FILENAME
+                    actf = Path("~/.teammate-sync/state").expanduser() / ACTIVE_SESSIONS_FILENAME
+                    if actf.exists():
+                        for s in json.loads(actf.read_text()).get("sessions", []):
+                            asid = s.get("session_id")
+                            if asid:
+                                active_by_sid[asid] = s
+                except (json.JSONDecodeError, OSError, ImportError):
+                    pass
+
+                def _label_for_session(session_id: str) -> str:
+                    try:
+                        a = active_by_sid.get(session_id) or {}
+                        cwd = a.get("cwd")
+                        if not cwd and a.get("transcript_path"):
+                            cwd = federated._session_cwd(a.get("transcript_path"))
+                        if cwd:
+                            return projects.label_for_cwd(cwd)
+                    except Exception:
+                        pass
+                    return (session_id or "")[:8]
+
                 my_shares: dict[str, list[str]] = {}
                 try:
                     reg = Path("~/.teammate-sync/state/.shared-sessions.json").expanduser()
                     if reg.exists():
                         for s in json.loads(reg.read_text()).get("sessions", []):
-                            sid = (s.get("session_id") or "")[:8]
+                            label = _label_for_session(s.get("session_id") or "")
                             for r in (s.get("recipients") or []):
                                 my_shares.setdefault(r, [])
-                                if sid and sid not in my_shares[r]:
-                                    my_shares[r].append(sid)
+                                if label and label not in my_shares[r]:
+                                    my_shares[r].append(label)
                 except (json.JSONDecodeError, OSError):
                     pass
+                for r in my_shares:
+                    my_shares[r] = sorted(my_shares[r])
                 snap["my_shares"] = my_shares
+
+                # Canonical project names this machine is tagged for (map values).
+                my_projects: list[str] = []
+                try:
+                    pmap = Path("~/.teammate-sync/project-map.json").expanduser()
+                    if pmap.exists():
+                        my_projects = sorted({v for v in json.loads(pmap.read_text()).values() if v})
+                except (json.JSONDecodeError, OSError, AttributeError):
+                    pass
+                snap["my_projects"] = my_projects
                 self._send_json(200, snap)
                 return
             if path == "/update/status":
